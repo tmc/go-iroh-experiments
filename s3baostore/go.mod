@@ -3,6 +3,11 @@ module github.com/tmc/go-iroh-experiments/s3baostore
 go 1.26
 
 require (
-	github.com/tmc/go-iroh v0.0.0-20260629190647-552146b5e8aa
+	github.com/tmc/go-iroh v0.0.0-20260629212311-70a5d5bb10e1
 	lukechampine.com/blake3 v1.4.1
+)
+
+require (
+	filippo.io/edwards25519 v1.2.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
 )

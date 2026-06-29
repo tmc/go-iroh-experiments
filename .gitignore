@@ -1,0 +1,4 @@
+# go.work ties the modules together for local development and carries a local
+# replace directive; it must not be published.
+go.work
+go.work.sum
