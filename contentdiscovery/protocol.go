@@ -25,6 +25,17 @@ const (
 	AnnounceComplete
 )
 
+func (k AnnounceKind) String() string {
+	switch k {
+	case AnnouncePartial:
+		return "partial"
+	case AnnounceComplete:
+		return "complete"
+	default:
+		return fmt.Sprintf("AnnounceKind(%d)", k)
+	}
+}
+
 // Announce is the signed content availability statement.
 //
 // The field order is the wire order used by Rust: host, content, kind,
