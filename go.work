@@ -4,6 +4,7 @@ use (
 	./contentdiscovery
 	./h3iroh
 	./pkarrnaming
+	./s3baostore
 )
 
 replace github.com/tmc/go-iroh => ../go-iroh
