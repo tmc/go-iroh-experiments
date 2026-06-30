@@ -1,0 +1,3 @@
+# Native Xet Reconstruction
+
+The current store imports through HuggingFace resolve URLs and serves data with HTTP range requests. A native Xet backend would add a second data source: resolve a file to its Xet file id, request `{casURL}/v1/reconstructions/{file_id_hex}`, then satisfy `ReadAt` by walking the returned terms, fetching the needed xorb byte ranges from `fetch_info` presigned URLs, applying `offset_into_first_range`, and concatenating the chunk ranges into the caller's buffer. That backend would plug in behind `Entry.DataReader` as another `io.ReaderAt` implementation while keeping the `Store` and `blobs.MapEntry` surface unchanged.
