@@ -69,8 +69,10 @@ type Group struct {
 	closed  bool
 
 	seq     atomic.Uint64
+	bseq    atomic.Uint64
 	pending map[uint64]chan []float32
 	inbound map[uint64]chan []float32
+	bcast   map[uint64]chan []byte
 }
 
 type announcement struct {
@@ -128,6 +130,7 @@ func JoinGroupWithHandler(ctx context.Context, ep *iroh.Endpoint, gg *gossip.Gos
 		events:  make(chan Event, 128),
 		pending: make(map[uint64]chan []float32),
 		inbound: make(map[uint64]chan []float32),
+		bcast:   make(map[uint64]chan []byte),
 	}
 	group.setMember(ep.ID(), ep.Addr(), time.Now())
 	if err := group.announce(ctx); err != nil {
@@ -250,18 +253,22 @@ func (g *Group) handle(ev gossip.Event) {
 		g.emit(Event{Kind: Leave, Peer: ev.Peer, Members: g.Members()})
 	case gossip.Received:
 		var a announcement
-		if err := json.Unmarshal(ev.Content, &a); err != nil || a.Type != "dtrain.join" {
+		if err := json.Unmarshal(ev.Content, &a); err == nil && a.Type == "dtrain.join" {
+			id, err := key.ParseEndpointID(a.ID)
+			if err != nil {
+				return
+			}
+			addr, err := announcementAddr(id, a.Addrs)
+			if err != nil {
+				return
+			}
+			g.setMember(id, addr, time.Now())
 			return
 		}
-		id, err := key.ParseEndpointID(a.ID)
-		if err != nil {
-			return
+		var b broadcastMessage
+		if err := json.Unmarshal(ev.Content, &b); err == nil && b.Type == "dtrain.broadcast" {
+			g.deliverBroadcast(b.Seq, b.Data)
 		}
-		addr, err := announcementAddr(id, a.Addrs)
-		if err != nil {
-			return
-		}
-		g.setMember(id, addr, time.Now())
 	}
 }
 
@@ -581,6 +588,88 @@ type allReduceHeader struct {
 	Op    Op     `json:"op"`
 	From  string `json:"from"`
 	N     int    `json:"n"`
+}
+
+type broadcastMessage struct {
+	Type string `json:"type"`
+	Seq  uint64 `json:"seq"`
+	Data []byte `json:"data"`
+}
+
+// Broadcast sends rank 0 data to every group member.
+func (g *Group) Broadcast(ctx context.Context, rank0Data []byte) ([]byte, error) {
+	if g == nil {
+		return nil, errors.New("dtrain: nil group")
+	}
+	seq := g.bseq.Add(1)
+	rank := g.Rank()
+	if rank < 0 {
+		return nil, errors.New("dtrain: local endpoint is not a member")
+	}
+	if rank == 0 {
+		data := slices.Clone(rank0Data)
+		g.deliverBroadcast(seq, data)
+		msg, err := json.Marshal(broadcastMessage{
+			Type: "dtrain.broadcast",
+			Seq:  seq,
+			Data: data,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dtrain: encode broadcast: %w", err)
+		}
+		if err := g.topic.Broadcast(ctx, msg); err != nil {
+			return nil, fmt.Errorf("dtrain: broadcast: %w", err)
+		}
+		return data, nil
+	}
+	return g.waitBroadcast(ctx, seq)
+}
+
+// Barrier waits until every member reaches the same point.
+func (g *Group) Barrier(ctx context.Context) error {
+	out, err := g.AllReduce(ctx, []float32{1}, Sum)
+	if err != nil {
+		return err
+	}
+	if len(out) != 1 || int(out[0]) != len(g.Members()) {
+		return errors.New("dtrain: barrier did not include every member")
+	}
+	return nil
+}
+
+func (g *Group) deliverBroadcast(seq uint64, data []byte) {
+	g.mu.Lock()
+	ch := g.bcast[seq]
+	if ch == nil {
+		ch = make(chan []byte, 1)
+		g.bcast[seq] = ch
+	}
+	g.mu.Unlock()
+	select {
+	case ch <- slices.Clone(data):
+	default:
+	}
+}
+
+func (g *Group) waitBroadcast(ctx context.Context, seq uint64) ([]byte, error) {
+	for {
+		g.mu.Lock()
+		ch := g.bcast[seq]
+		if ch == nil {
+			ch = make(chan []byte, 1)
+			g.bcast[seq] = ch
+		}
+		g.mu.Unlock()
+		select {
+		case data := <-ch:
+			g.mu.Lock()
+			delete(g.bcast, seq)
+			g.mu.Unlock()
+			return slices.Clone(data), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 func writeAllReduce(w io.Writer, f allReduceFrame) error {
