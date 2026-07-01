@@ -79,6 +79,7 @@ func TestGroupMembershipConverges(t *testing.T) {
 type testNode struct {
 	ep     *iroh.Endpoint
 	gossip *gossip.Gossip
+	dtrain *Handler
 	router *iroh.Router
 }
 
