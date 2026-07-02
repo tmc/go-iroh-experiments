@@ -427,6 +427,7 @@ func (g *Group) exchange(ctx context.Context, m Member, seq uint64, op Op, value
 	if err != nil {
 		return nil, fmt.Errorf("dtrain: connect peer rank %d: %w", m.Rank, err)
 	}
+	defer conn.Close()
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("dtrain: open allreduce stream: %w", err)
