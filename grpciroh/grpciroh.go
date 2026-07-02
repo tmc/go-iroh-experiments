@@ -59,6 +59,8 @@ type Conn struct {
 func NewClient(conn *iroh.Conn, target string, extra ...grpc.DialOption) (*Conn, error) {
 	cc, err := grpc.NewClient(target, append(DialOptions(conn), extra...)...)
 	if err != nil {
+		// NewClient owns conn, so close it rather than leak it on the error path.
+		conn.Close()
 		return nil, err
 	}
 	return &Conn{ClientConn: cc, iroh: conn}, nil

@@ -63,12 +63,10 @@ func (greeterServer) BidiHello(stream greeterpb.Greeter_BidiHelloServer) error {
 }
 
 func TestUnary(t *testing.T) {
-	ctx, gc, conn, cleanup := newTestClient(t)
+	// newTestClient checks conn.RemoteID against the server identity on setup.
+	ctx, gc, _, cleanup := newTestClient(t)
 	defer cleanup()
 
-	if !conn.RemoteID().Equal(conn.RemoteID()) {
-		t.Fatal("remote id is not stable")
-	}
 	reply, err := gc.SayHello(ctx, &greeterpb.HelloRequest{Name: "iroh"})
 	if err != nil {
 		t.Fatalf("SayHello: %v", err)
@@ -196,6 +194,12 @@ func newTestClient(t *testing.T) (context.Context, greeterpb.GreeterClient, *iro
 		t.Fatalf("connect: %v", err)
 	}
 	if !conn.RemoteID().Equal(server.ID()) {
+		conn.Close()
+		client.Shutdown(ctx)
+		srv.Stop()
+		lis.Close()
+		server.Shutdown(ctx)
+		cancel()
 		t.Fatalf("remote id = %v, want %v", conn.RemoteID(), server.ID())
 	}
 	cc, err := grpc.NewClient(server.ID().String(), grpciroh.DialOptions(conn)...)

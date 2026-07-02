@@ -3,7 +3,8 @@
 // The server side needs no adapter code. Bind an iroh endpoint with ALPN,
 // call Endpoint.ListenStreams, and pass the listener to grpc.Server.Serve.
 //
-//	Client side connects to the peer by EndpointID:
+// The client side connects to the peer by EndpointID:
+//
 //	conn, err := ep.Connect(ctx, addr, grpciroh.ALPN)
 //	cc, err := grpc.NewClient(peerID.String(), grpciroh.DialOptions(conn)...)
 //
