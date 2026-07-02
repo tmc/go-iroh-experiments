@@ -616,8 +616,10 @@ func (g *Group) Broadcast(ctx context.Context, rank0Data []byte) ([]byte, error)
 		return nil, errors.New("dtrain: local endpoint is not a member")
 	}
 	if rank == 0 {
+		// Rank 0 has the data already and returns it directly below, so it does
+		// not deliver to its own bcast channel — doing so left an entry in the
+		// bcast map that only waitBroadcast (which rank 0 never calls) removes.
 		data := slices.Clone(rank0Data)
-		g.deliverBroadcast(seq, data)
 		msg, err := json.Marshal(broadcastMessage{
 			Type: "dtrain.broadcast",
 			Seq:  seq,
@@ -708,10 +710,21 @@ func writeAllReduce(w io.Writer, f allReduceFrame) error {
 	return nil
 }
 
+// Bounds on decoded frames. The ALPN is public, so a peer's declared sizes are
+// untrusted; cap them before allocating to avoid an out-of-memory from a single
+// oversized length field.
+const (
+	maxAllReduceHeader = 64 << 10 // JSON header is a few hundred bytes
+	maxAllReduceValues = 64 << 20 // 64M float32 = 256 MiB
+)
+
 func readAllReduce(r io.Reader) (allReduceFrame, error) {
 	var n uint32
 	if err := binary.Read(r, binary.BigEndian, &n); err != nil {
 		return allReduceFrame{}, fmt.Errorf("dtrain: read allreduce header length: %w", err)
+	}
+	if n > maxAllReduceHeader {
+		return allReduceFrame{}, fmt.Errorf("dtrain: allreduce header too large: %d", n)
 	}
 	h := make([]byte, n)
 	if _, err := io.ReadFull(r, h); err != nil {
@@ -728,8 +741,8 @@ func readAllReduce(r io.Reader) (allReduceFrame, error) {
 	if vectorLen != uint64(header.N) {
 		return allReduceFrame{}, errors.New("dtrain: allreduce vector length mismatch")
 	}
-	if vectorLen > uint64(math.MaxInt) {
-		return allReduceFrame{}, errors.New("dtrain: allreduce vector too large")
+	if vectorLen > maxAllReduceValues {
+		return allReduceFrame{}, fmt.Errorf("dtrain: allreduce vector too large: %d", vectorLen)
 	}
 	values := make([]float32, int(vectorLen))
 	for i := range values {
