@@ -211,20 +211,17 @@ func (g *Group) run() {
 	}()
 
 	go g.announceLoop()
-	for {
-		for ev, err := range g.topic.Events() {
-			if err != nil {
-				g.emit(Event{Kind: Leave})
-				return
-			}
-			g.handle(ev)
-			break
-		}
-		select {
-		case <-g.ctx.Done():
+	// Events blocks and yields events until the topic channel closes (the group
+	// is closed, or gossip dropped the subscriber after a Lagged overflow), at
+	// which point the range ends and run returns. Ranging once — rather than
+	// re-entering Events after each event — avoids a hot spin once the channel
+	// is closed and drained.
+	for ev, err := range g.topic.Events() {
+		if err != nil {
+			g.emit(Event{Kind: Leave})
 			return
-		default:
 		}
+		g.handle(ev)
 	}
 }
 
@@ -373,6 +370,12 @@ const (
 )
 
 // AllReduce exchanges one vector with every peer and returns the reduced vector.
+//
+// AllReduce and [Group.Barrier] follow the SPMD collective model: every member
+// must issue the same sequence of collectives in the same order. Collectives are
+// correlated by a per-member sequence number, so a member that skips or reorders
+// a collective desynchronizes the group and its peers block until the context
+// deadline.
 func (g *Group) AllReduce(ctx context.Context, values []float32, op Op) ([]float32, error) {
 	if g == nil {
 		return nil, errors.New("dtrain: nil group")
@@ -433,6 +436,11 @@ func (g *Group) exchange(ctx context.Context, m Member, seq uint64, op Op, value
 		return nil, fmt.Errorf("dtrain: open allreduce stream: %w", err)
 	}
 	defer stream.Close()
+	// Honor the caller's context deadline during stream I/O so a stalled or
+	// crashed peer cannot wedge the collective forever.
+	if deadline, ok := ctx.Deadline(); ok {
+		stream.SetDeadline(deadline)
+	}
 	if err := writeAllReduce(stream, allReduceFrame{
 		Group:  g.name,
 		Seq:    seq,
@@ -626,7 +634,9 @@ func (g *Group) Broadcast(ctx context.Context, rank0Data []byte) ([]byte, error)
 	return g.waitBroadcast(ctx, seq)
 }
 
-// Barrier waits until every member reaches the same point.
+// Barrier waits until every member reaches the same point. Like
+// [Group.AllReduce], it is an SPMD collective: every member must call it in the
+// same order relative to other collectives, or the group desynchronizes.
 func (g *Group) Barrier(ctx context.Context) error {
 	out, err := g.AllReduce(ctx, []float32{1}, Sum)
 	if err != nil {
