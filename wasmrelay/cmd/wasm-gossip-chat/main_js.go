@@ -87,7 +87,10 @@ func main() {
 
 func run() error {
 	// Long-lived: the tab stays open. Individual ops get their own short ctx.
-	ctx := context.Background()
+	// Cancel on return so the heal and beacon goroutines stop if the event loop
+	// ever ends (the topic closed).
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	q := query()
 	relayRaw := q("relay")
