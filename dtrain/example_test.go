@@ -55,6 +55,27 @@ func Example_diloco() {
 	// parameters: 1.12 2.12 3.12 4.12
 }
 
+func ExampleGroup_AllGather() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tb := exampleTB{}
+	nodes, groups := newAllReduceGroups(tb, ctx, 3)
+	defer closeGroups(groups)
+	defer closeNodes(ctx, nodes)
+
+	inputs := make([][]float32, len(groups))
+	for i, g := range groups {
+		rank := g.Rank()
+		inputs[i] = []float32{float32(rank), float32(rank + 10)}
+	}
+	got := runAllGather(tb, ctx, groups, inputs)
+	fmt.Println(got[0])
+
+	// Output:
+	// [0 10 1 11 2 12]
+}
+
 type exampleTB struct{}
 
 func (exampleTB) Helper() {}

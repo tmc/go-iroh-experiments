@@ -74,6 +74,78 @@ func TestAllReduce(t *testing.T) {
 	}
 }
 
+func TestAllGather(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	nodes, groups := newAllReduceGroups(t, ctx, 3)
+	defer closeGroups(groups)
+	defer closeNodes(ctx, nodes)
+
+	tests := []struct {
+		name string
+		in   func(rank int) []float32
+	}{
+		{
+			name: "two values per rank",
+			in: func(rank int) []float32 {
+				return []float32{float32(rank), float32(rank + 10)}
+			},
+		},
+		{
+			name: "empty vectors",
+			in: func(rank int) []float32 {
+				return nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inputs := make([][]float32, len(groups))
+			wantByRank := make([][]float32, len(groups))
+			for i, g := range groups {
+				rank := g.Rank()
+				inputs[i] = tt.in(rank)
+				wantByRank[rank] = inputs[i]
+			}
+			var want []float32
+			for _, part := range wantByRank {
+				want = append(want, part...)
+			}
+			got := runAllGather(t, ctx, groups, inputs)
+			for i, values := range got {
+				if !closeFloat32s(values, want) {
+					t.Fatalf("peer %d result = %v, want %v", i, values, want)
+				}
+			}
+		})
+	}
+}
+
+func TestAllGatherMismatchedLengths(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	nodes, groups := newAllReduceGroups(t, ctx, 3)
+	defer closeGroups(groups)
+	defer closeNodes(ctx, nodes)
+
+	inputs := make([][]float32, len(groups))
+	for i, g := range groups {
+		if g.Rank() == 1 {
+			inputs[i] = []float32{1, 2, 3}
+		} else {
+			inputs[i] = []float32{1, 2}
+		}
+	}
+	errs := runAllGatherErrors(ctx, groups, inputs)
+	for i, err := range errs {
+		if err == nil {
+			t.Fatalf("peer %d AllGather succeeded with mismatched input lengths", i)
+		}
+	}
+}
+
 func BenchmarkAllReduce1M(b *testing.B) {
 	if testing.Short() {
 		b.Skip("skipping mesh benchmark in short mode")
@@ -188,6 +260,37 @@ func runAllReduce(tb testingTB, ctx context.Context, groups []*Group, inputs [][
 		}
 	}
 	return out
+}
+
+func runAllGather(tb testingTB, ctx context.Context, groups []*Group, inputs [][]float32) [][]float32 {
+	tb.Helper()
+	out, errs := runAllGatherAll(ctx, groups, inputs)
+	for i, err := range errs {
+		if err != nil {
+			tb.Fatalf("peer %d AllGather: %v", i, err)
+		}
+	}
+	return out
+}
+
+func runAllGatherErrors(ctx context.Context, groups []*Group, inputs [][]float32) []error {
+	_, errs := runAllGatherAll(ctx, groups, inputs)
+	return errs
+}
+
+func runAllGatherAll(ctx context.Context, groups []*Group, inputs [][]float32) ([][]float32, []error) {
+	out := make([][]float32, len(groups))
+	errs := make([]error, len(groups))
+	var wg sync.WaitGroup
+	for i := range groups {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			out[i], errs[i] = groups[i].AllGather(ctx, inputs[i])
+		}(i)
+	}
+	wg.Wait()
+	return out, errs
 }
 
 func closeGroups(groups []*Group) {

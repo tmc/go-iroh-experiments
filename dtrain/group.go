@@ -71,7 +71,7 @@ type Group struct {
 	seq     atomic.Uint64
 	bseq    atomic.Uint64
 	pending map[uint64]chan []float32
-	inbound map[uint64]chan []float32
+	inbound map[uint64]chan allReduceFrame
 	bcast   map[uint64]chan []byte
 }
 
@@ -129,7 +129,7 @@ func JoinGroupWithHandler(ctx context.Context, ep *iroh.Endpoint, gg *gossip.Gos
 		members: make(map[key.EndpointID]memberState),
 		events:  make(chan Event, 128),
 		pending: make(map[uint64]chan []float32),
-		inbound: make(map[uint64]chan []float32),
+		inbound: make(map[uint64]chan allReduceFrame),
 		bcast:   make(map[uint64]chan []byte),
 	}
 	group.setMember(ep.ID(), ep.Addr(), time.Now())
@@ -422,6 +422,69 @@ func (g *Group) AllReduce(ctx context.Context, values []float32, op Op) ([]float
 	return out, nil
 }
 
+// AllGather exchanges one vector with every peer and returns all vectors
+// concatenated in rank order.
+//
+// Like [Group.AllReduce], AllGather is an SPMD collective: every member must
+// call it in the same collective order. Each member must contribute a vector of
+// the same length.
+func (g *Group) AllGather(ctx context.Context, values []float32) ([]float32, error) {
+	if g == nil {
+		return nil, errors.New("dtrain: nil group")
+	}
+	if g.h == nil {
+		return nil, errors.New("dtrain: group has no stream handler")
+	}
+	members := g.Members()
+	rank := g.Rank()
+	if rank < 0 {
+		return nil, errors.New("dtrain: local endpoint is not a member")
+	}
+	seq := g.seq.Add(1)
+	local := slices.Clone(values)
+	g.publishLocal(seq, local)
+	defer g.clearLocal(seq)
+
+	parts := make([][]float32, len(members))
+	have := make([]bool, len(members))
+	parts[rank] = local
+	have[rank] = true
+	for _, m := range members {
+		if m.Rank == rank {
+			continue
+		}
+		var frame allReduceFrame
+		var err error
+		if rank > m.Rank {
+			var peer []float32
+			peer, err = g.exchange(ctx, m, seq, Sum, values)
+			frame = allReduceFrame{From: m.ID.String(), Values: peer}
+		} else {
+			frame, err = g.waitInboundFrame(ctx, seq)
+		}
+		if err != nil {
+			return nil, err
+		}
+		peerRank := rankOfMember(members, frame.From)
+		if peerRank < 0 {
+			return nil, fmt.Errorf("dtrain: allgather from unknown peer %q", frame.From)
+		}
+		if len(frame.Values) != len(values) {
+			return nil, fmt.Errorf("dtrain: peer vector length %d, want %d", len(frame.Values), len(values))
+		}
+		parts[peerRank] = slices.Clone(frame.Values)
+		have[peerRank] = true
+	}
+	out := make([]float32, 0, len(members)*len(values))
+	for i, part := range parts {
+		if !have[i] {
+			return nil, fmt.Errorf("dtrain: missing allgather rank %d", i)
+		}
+		out = append(out, part...)
+	}
+	return out, nil
+}
+
 func (g *Group) exchange(ctx context.Context, m Member, seq uint64, op Op, values []float32) ([]float32, error) {
 	if m.Addr.IsEmpty() {
 		return nil, fmt.Errorf("dtrain: no address for peer rank %d", m.Rank)
@@ -463,7 +526,7 @@ func (g *Group) publishLocal(seq uint64, values []float32) {
 	ch := make(chan []float32, 1)
 	ch <- slices.Clone(values)
 	g.pending[seq] = ch
-	g.inbound[seq] = make(chan []float32, len(g.ranked))
+	g.inbound[seq] = make(chan allReduceFrame, len(g.ranked))
 }
 
 func (g *Group) clearLocal(seq uint64) {
@@ -495,38 +558,55 @@ func (g *Group) waitLocal(ctx context.Context, seq uint64) ([]float32, error) {
 	}
 }
 
-func (g *Group) deliverInbound(seq uint64, values []float32) {
+func (g *Group) deliverInbound(frame allReduceFrame) {
 	g.mu.Lock()
-	ch := g.inbound[seq]
+	ch := g.inbound[frame.Seq]
 	g.mu.Unlock()
 	if ch == nil {
 		return
 	}
 	select {
-	case ch <- slices.Clone(values):
+	case ch <- cloneAllReduceFrame(frame):
 	default:
 	}
 }
 
 func (g *Group) waitInbound(ctx context.Context, seq uint64) ([]float32, error) {
+	frame, err := g.waitInboundFrame(ctx, seq)
+	if err != nil {
+		return nil, err
+	}
+	return frame.Values, nil
+}
+
+func (g *Group) waitInboundFrame(ctx context.Context, seq uint64) (allReduceFrame, error) {
 	for {
 		g.mu.Lock()
 		ch := g.inbound[seq]
 		g.mu.Unlock()
 		if ch != nil {
 			select {
-			case v := <-ch:
-				return v, nil
+			case f := <-ch:
+				return f, nil
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return allReduceFrame{}, ctx.Err()
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return allReduceFrame{}, ctx.Err()
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
+}
+
+func rankOfMember(members []Member, id string) int {
+	for _, m := range members {
+		if m.ID.String() == id {
+			return m.Rank
+		}
+	}
+	return -1
 }
 
 func (h *Handler) register(name string, g *Group) {
@@ -569,7 +649,7 @@ func (h *Handler) serve(ctx context.Context, stream *iroh.Stream) {
 	if group == nil {
 		return
 	}
-	group.deliverInbound(frame.Seq, frame.Values)
+	group.deliverInbound(frame)
 	values, err := group.waitLocal(ctx, frame.Seq)
 	if err != nil {
 		return
@@ -589,6 +669,11 @@ type allReduceFrame struct {
 	Op     Op
 	From   string
 	Values []float32
+}
+
+func cloneAllReduceFrame(f allReduceFrame) allReduceFrame {
+	f.Values = slices.Clone(f.Values)
+	return f
 }
 
 type allReduceHeader struct {
