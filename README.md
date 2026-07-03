@@ -2,19 +2,33 @@
 
 Experimental modules built on [github.com/tmc/go-iroh](https://github.com/tmc/go-iroh).
 Each experiment is its own Go module so its dependencies stay isolated and it
-can be released independently. They are clean-room Go ports of the corresponding
-Rust [iroh-experiments](https://github.com/n0-computer/iroh-experiments)
-subprojects, targeting wire compatibility.
+can be released independently.
 
-## Modules
+Several modules are clean-room Go ports of the corresponding Rust
+[iroh-experiments](https://github.com/n0-computer/iroh-experiments) subprojects,
+targeting wire compatibility. Others are original experiments that explore what
+go-iroh enables.
+
+## Ports of Rust iroh-experiments
 
 | Module | Purpose |
 |---|---|
-| `pkarrnaming` | IPNS-style content naming published over the pkarr relay transport |
+| `pkarrnaming` | content naming published and resolved over the pkarr relay transport |
 | `contentdiscovery` | tracker overlay for announcing and finding content providers (ALPN `n0/tracker/1`) |
 | `s3baostore` | iroh-blobs provider backed by a remote S3/HTTP object store |
 | `dagsync` | IPLD DAG synchronization over iroh (ALPN `DAG_SYNC/1`) |
 | `h3iroh` | HTTP/3 connection adapter over an iroh connection |
+
+## Original experiments
+
+| Module | Purpose |
+|---|---|
+| `dtrain` | distributed-training collectives (AllReduce, broadcast, barrier) over a gossip group (ALPN `/dtrain/1`) |
+| `grpciroh` | run unmodified gRPC services over an iroh QUIC connection (ALPN `grpc/iroh/1`) |
+| `wasmrelay` | browser (js/wasm) relay-only demos, including a cross-tab gossip chat |
+| `xetstore` | serve HuggingFace/Xet files as iroh blobs via BAO outboards over HTTP range requests |
+
+Each module has its own `README.md` and package docs.
 
 ## Use
 
@@ -33,7 +47,8 @@ checkout of `go-iroh`. It is intentionally not committed, since it carries a
 local `replace` directive. Create it locally with:
 
 ```sh
-go work init ./contentdiscovery ./dagsync ./h3iroh ./pkarrnaming ./s3baostore
+go work init ./contentdiscovery ./dagsync ./dtrain ./grpciroh ./h3iroh \
+    ./pkarrnaming ./s3baostore ./wasmrelay ./xetstore
 go work edit -replace github.com/tmc/go-iroh=../go-iroh   # optional, for local go-iroh work
 ```
 
