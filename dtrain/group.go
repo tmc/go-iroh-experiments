@@ -485,6 +485,32 @@ func (g *Group) AllGather(ctx context.Context, values []float32) ([]float32, err
 	return out, nil
 }
 
+// ReduceScatter reduces one vector across all members and returns this rank's
+// contiguous shard of the reduced vector.
+//
+// The vector length must be divisible by the current membership size. Like
+// [Group.AllReduce], ReduceScatter is an SPMD collective.
+func (g *Group) ReduceScatter(ctx context.Context, values []float32, op Op) ([]float32, error) {
+	members := g.Members()
+	rank := g.Rank()
+	if rank < 0 {
+		return nil, errors.New("dtrain: local endpoint is not a member")
+	}
+	if len(members) == 0 {
+		return nil, errors.New("dtrain: empty group")
+	}
+	if len(values)%len(members) != 0 {
+		return nil, fmt.Errorf("dtrain: vector length %d not divisible by group size %d", len(values), len(members))
+	}
+	reduced, err := g.AllReduce(ctx, values, op)
+	if err != nil {
+		return nil, err
+	}
+	shard := len(reduced) / len(members)
+	start := rank * shard
+	return slices.Clone(reduced[start : start+shard]), nil
+}
+
 func (g *Group) exchange(ctx context.Context, m Member, seq uint64, op Op, values []float32) ([]float32, error) {
 	if m.Addr.IsEmpty() {
 		return nil, fmt.Errorf("dtrain: no address for peer rank %d", m.Rank)

@@ -146,6 +146,52 @@ func TestAllGatherMismatchedLengths(t *testing.T) {
 	}
 }
 
+func TestReduceScatter(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	nodes, groups := newAllReduceGroups(t, ctx, 3)
+	defer closeGroups(groups)
+	defer closeNodes(ctx, nodes)
+
+	inputs := make([][]float32, len(groups))
+	for i, g := range groups {
+		rank := g.Rank()
+		inputs[i] = []float32{
+			float32(rank + 1), float32(rank + 2),
+			float32(rank + 3), float32(rank + 4),
+			float32(rank + 5), float32(rank + 6),
+		}
+	}
+	got := runReduceScatter(t, ctx, groups, inputs, Sum)
+	want := [][]float32{
+		{6, 9},
+		{12, 15},
+		{18, 21},
+	}
+	for i, values := range got {
+		rank := groups[i].Rank()
+		if !closeFloat32s(values, want[rank]) {
+			t.Fatalf("peer %d rank %d ReduceScatter = %v, want %v", i, rank, values, want[rank])
+		}
+	}
+}
+
+func TestReduceScatterRequiresEvenShards(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	nodes, groups := newAllReduceGroups(t, ctx, 3)
+	defer closeGroups(groups)
+	defer closeNodes(ctx, nodes)
+
+	for i, g := range groups {
+		if _, err := g.ReduceScatter(ctx, []float32{1, 2}, Sum); err == nil {
+			t.Fatalf("peer %d ReduceScatter accepted indivisible vector", i)
+		}
+	}
+}
+
 func BenchmarkAllReduce1M(b *testing.B) {
 	if testing.Short() {
 		b.Skip("skipping mesh benchmark in short mode")
@@ -291,6 +337,27 @@ func runAllGatherAll(ctx context.Context, groups []*Group, inputs [][]float32) (
 	}
 	wg.Wait()
 	return out, errs
+}
+
+func runReduceScatter(tb testingTB, ctx context.Context, groups []*Group, inputs [][]float32, op Op) [][]float32 {
+	tb.Helper()
+	out := make([][]float32, len(groups))
+	errs := make([]error, len(groups))
+	var wg sync.WaitGroup
+	for i := range groups {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			out[i], errs[i] = groups[i].ReduceScatter(ctx, inputs[i], op)
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			tb.Fatalf("peer %d ReduceScatter: %v", i, err)
+		}
+	}
+	return out
 }
 
 func closeGroups(groups []*Group) {
