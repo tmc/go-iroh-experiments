@@ -94,6 +94,42 @@ func TestLoopbackSync(t *testing.T) {
 	}
 }
 
+func TestReadSyncResponseRejectsTamperedBlob(t *testing.T) {
+	ctx := context.Background()
+	good := []byte("hello dagsync")
+	bad := []byte("tampered dagsync")
+	c := testCID(t, good)
+	wantHash := blobs.NewHash(good)
+	gotHash, badBlob, err := blobs.EncodeBlob(bad)
+	if err != nil {
+		t.Fatalf("EncodeBlob: %v", err)
+	}
+	if gotHash == wantHash {
+		t.Fatal("test data hashes matched")
+	}
+
+	var wire bytes.Buffer
+	if err := writeHeader(&wire, DataHeader(wantHash)); err != nil {
+		t.Fatalf("writeHeader: %v", err)
+	}
+	if _, err := wire.Write(badBlob); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	req := SyncRequest{Traversal: SequenceTraversal(c), Inline: InlineAll()}
+	dest := blobs.BytesMap{}
+	destTables := NewTables()
+	err = ReadSyncResponse(ctx, &wire, destTables, &dest, req.Traversal)
+	if err == nil {
+		t.Fatal("ReadSyncResponse accepted tampered blob")
+	}
+	if _, ok := dest.Store().GetBlob(wantHash); ok {
+		t.Fatal("stored tampered blob under expected hash")
+	}
+	if _, ok := destTables.BlobHash(c); ok {
+		t.Fatal("recorded cid for rejected blob")
+	}
+}
+
 func TestFullTraversalFollowsDagCborLinks(t *testing.T) {
 	ctx := context.Background()
 	childData := []byte("child")
