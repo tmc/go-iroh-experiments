@@ -192,6 +192,86 @@ func TestReduceScatterRequiresEvenShards(t *testing.T) {
 	}
 }
 
+func TestRejectsSpoofedAllGatherFrame(t *testing.T) {
+	tests := []struct {
+		name     string
+		from     func(nodes []testNode, groups []*Group) string
+		attacker func(nodes []testNode) testNode
+	}{
+		{
+			name: "different existing rank",
+			from: func(_ []testNode, groups []*Group) string {
+				return groups[2].ID().String()
+			},
+			attacker: func(nodes []testNode) testNode {
+				return nodes[1]
+			},
+		},
+		{
+			name: "non-member",
+			from: func(nodes []testNode, _ []*Group) string {
+				return nodes[3].ep.ID().String()
+			},
+			attacker: func(nodes []testNode) testNode {
+				return nodes[3]
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
+			nodes, groups := newAllReduceGroups(t, ctx, 3)
+			defer closeGroups(groups)
+			defer closeNodes(ctx, nodes)
+			rogue := newDtrainNode(t, ctx)
+			defer rogue.close(ctx)
+			nodes = append(nodes, rogue)
+
+			const seq = 99
+			target := groups[0]
+			target.publishLocal(seq, []float32{1})
+			defer target.clearLocal(seq)
+
+			accepted := injectAllReduceFrame(t, ctx, tt.attacker(nodes), target, allReduceFrame{
+				Group:  target.name,
+				Seq:    seq,
+				Op:     Sum,
+				From:   tt.from(nodes, groups),
+				Values: []float32{99},
+			})
+			if accepted {
+				t.Fatalf("accepted forged frame from %q", tt.from(nodes, groups))
+			}
+		})
+	}
+}
+
+func injectAllReduceFrame(tb testingTB, ctx context.Context, from testNode, target *Group, frame allReduceFrame) bool {
+	tb.Helper()
+	conn, err := from.ep.Connect(ctx, netaddr.NewEndpointAddr(target.ID()).WithIP(target.ep.LocalAddr()), ALPN)
+	if err != nil {
+		tb.Fatalf("connect target: %v", err)
+	}
+	defer conn.Close()
+	stream, err := conn.OpenStreamSync(ctx)
+	if err != nil {
+		tb.Fatalf("open stream: %v", err)
+	}
+	defer stream.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		stream.SetDeadline(deadline)
+	}
+	if err := writeAllReduce(stream, frame); err != nil {
+		tb.Fatalf("write forged frame: %v", err)
+	}
+	_ = stream.SetDeadline(time.Now().Add(250 * time.Millisecond))
+	_, err = readAllReduce(stream)
+	return err == nil
+}
+
 func BenchmarkAllReduce1M(b *testing.B) {
 	if testing.Short() {
 		b.Skip("skipping mesh benchmark in short mode")

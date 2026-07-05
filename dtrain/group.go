@@ -520,6 +520,13 @@ func (g *Group) exchange(ctx context.Context, m Member, seq uint64, op Op, value
 		return nil, fmt.Errorf("dtrain: connect peer rank %d: %w", m.Rank, err)
 	}
 	defer conn.Close()
+	remote := conn.RemoteID()
+	if remote.IsZero() {
+		return nil, fmt.Errorf("dtrain: peer rank %d has no verified identity", m.Rank)
+	}
+	if !remote.Equal(m.ID) {
+		return nil, fmt.Errorf("dtrain: peer rank %d identity mismatch: got %s want %s", m.Rank, remote, m.ID)
+	}
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("dtrain: open allreduce stream: %w", err)
@@ -542,6 +549,13 @@ func (g *Group) exchange(ctx context.Context, m Member, seq uint64, op Op, value
 	frame, err := readAllReduce(stream)
 	if err != nil {
 		return nil, err
+	}
+	from, err := key.ParseEndpointID(frame.From)
+	if err != nil {
+		return nil, fmt.Errorf("dtrain: parse peer identity: %w", err)
+	}
+	if !from.Equal(remote) {
+		return nil, fmt.Errorf("dtrain: peer rank %d response identity mismatch: got %s want %s", m.Rank, from, remote)
 	}
 	return frame.Values, nil
 }
@@ -635,6 +649,13 @@ func rankOfMember(members []Member, id string) int {
 	return -1
 }
 
+func (g *Group) hasMember(id key.EndpointID) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.members[id]
+	return ok
+}
+
 func (h *Handler) register(name string, g *Group) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -659,20 +680,31 @@ func (h *Handler) Accept(ctx context.Context, conn *iroh.Conn) error {
 			}
 			return err
 		}
-		go h.serve(ctx, stream)
+		go h.serve(ctx, conn, stream)
 	}
 }
 
-func (h *Handler) serve(ctx context.Context, stream *iroh.Stream) {
+func (h *Handler) serve(ctx context.Context, conn *iroh.Conn, stream *iroh.Stream) {
 	defer stream.Close()
+	remote := conn.RemoteID()
+	if remote.IsZero() {
+		return
+	}
 	frame, err := readAllReduce(stream)
 	if err != nil {
+		return
+	}
+	from, err := key.ParseEndpointID(frame.From)
+	if err != nil || !from.Equal(remote) {
 		return
 	}
 	h.mu.Lock()
 	group := h.groups[frame.Group]
 	h.mu.Unlock()
 	if group == nil {
+		return
+	}
+	if !group.hasMember(remote) {
 		return
 	}
 	group.deliverInbound(frame)
