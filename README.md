@@ -24,6 +24,7 @@ go-iroh enables.
 | Module | Purpose |
 |---|---|
 | `dtrain` | distributed-training collectives (AllReduce, broadcast, barrier) over a gossip group (ALPN `/dtrain/1`) |
+| `directpath` | direct-only QUIC path probe for cross-host and dual-stack go-iroh validation |
 | `grpciroh` | run unmodified gRPC services over an iroh QUIC connection (ALPN `grpc/iroh/1`) |
 | `wasmrelay` | browser (js/wasm) relay-only demos, including a cross-tab gossip chat |
 | `xetstore` | serve HuggingFace/Xet files as iroh blobs via BAO outboards over HTTP range requests |
@@ -48,7 +49,7 @@ local `replace` directive. Create it locally with:
 
 ```sh
 go work init ./contentdiscovery ./dagsync ./dtrain ./grpciroh ./h3iroh \
-    ./pkarrnaming ./s3baostore ./wasmrelay ./xetstore
+    ./directpath ./pkarrnaming ./s3baostore ./wasmrelay ./xetstore
 go work edit -replace github.com/tmc/go-iroh=../go-iroh   # optional, for local go-iroh work
 ```
 
