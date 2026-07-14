@@ -2,7 +2,7 @@ module github.com/tmc/go-iroh-experiments/directpath
 
 go 1.26
 
-require github.com/tmc/go-iroh v0.0.0-20260707002533-2f6c309505d4
+require github.com/tmc/go-iroh v0.0.0-20260714184955-aaac36baa54e
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
