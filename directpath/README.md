@@ -41,3 +41,26 @@ On macOS firewall-gated hosts, use this as the minimal reproduction: if the
 listener prints a reachable Tailscale address but `dial` times out before the
 listener logs an accepted connection, inbound UDP is being dropped before
 go-iroh can validate a path.
+
+## Two-host direct-path upgrade with relay coordination
+
+`twobox-directpath` is the relay-enabled complement to the probe: the client
+dials with relay coordination available, so it checks that a connection
+upgrades to a validated direct path even when a relay fallback exists, and it
+measures stream throughput on the selected path.
+
+On the receiving host:
+
+```sh
+go run ./cmd/twobox-directpath -mode server -bind <host>:0
+```
+
+Copy the printed endpoint id and address. On the dialing host:
+
+```sh
+go run ./cmd/twobox-directpath -mode client -id <id> -peer <host:port> -bytes 2500000
+```
+
+The client reports each path with selected/validated/relayed flags and the
+achieved throughput. Pass `-relay=false` to forbid the relay fallback
+entirely, which turns it into a stricter version of the probe's `dial`.
