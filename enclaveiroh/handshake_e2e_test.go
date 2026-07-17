@@ -97,10 +97,13 @@ func TestHandshakeOverIroh(t *testing.T) {
 	clientCfg := HandshakeConfig{
 		SelfID: server.RemoteID(), Mode: ModeMutual,
 		Signer: newFakeSigner(t), Identity: e2eIdentity("CLIENTTEAM"),
+		ClaimVersion: 7,
+		Policy:       Policy{MinClaimVersion: 3}, // server claims 3: at threshold
 	}
 	serverCfg := HandshakeConfig{
 		SelfID: client.RemoteID(), Mode: ModeMutual,
 		Signer: newFakeSigner(t), Identity: e2eIdentity("SERVERTEAM"),
+		ClaimVersion: 3,
 	}
 
 	clientAtt, serverAtt, clientErr, serverErr := runBothSides(ctx, client, server, clientCfg, serverCfg)
@@ -109,6 +112,10 @@ func TestHandshakeOverIroh(t *testing.T) {
 	}
 	if clientAtt == nil || !clientAtt.Attested || serverAtt == nil || !serverAtt.Attested {
 		t.Fatalf("attestations: client=%+v server=%+v, want both Attested", clientAtt, serverAtt)
+	}
+	if clientAtt.Claim.ClaimVersion != 3 || serverAtt.Claim.ClaimVersion != 7 {
+		t.Errorf("claim versions: client saw %d (want 3), server saw %d (want 7)",
+			clientAtt.Claim.ClaimVersion, serverAtt.Claim.ClaimVersion)
 	}
 
 	// Cross-check the channel binding from each side's view.

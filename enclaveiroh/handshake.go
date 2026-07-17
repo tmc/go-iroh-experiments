@@ -113,6 +113,10 @@ type HandshakeConfig struct {
 	Bundled      bool
 	EphemeralKey bool
 
+	// ClaimVersion is the operator-asserted build version reported in this
+	// side's claim; see [Claim.ClaimVersion] and [Policy.MinClaimVersion].
+	ClaimVersion uint64
+
 	// Policy is applied to the peer's claim when Mode verifies.
 	Policy Policy
 }
@@ -305,6 +309,7 @@ func buildClaim(role string, cfg HandshakeConfig, peerID key.EndpointID, alpn st
 		EphemeralKey:   cfg.EphemeralKey,
 		AttestKey:      hex.EncodeToString(pub),
 		Time:           time.Now().UTC().Format(time.RFC3339),
+		ClaimVersion:   cfg.ClaimVersion,
 	}, nil
 }
 

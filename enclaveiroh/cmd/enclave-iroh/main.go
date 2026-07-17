@@ -38,6 +38,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -68,6 +69,15 @@ func registerHardenedFlags(fs *flag.FlagSet) *hardenedConfig {
 	return hcfg
 }
 
+// claimVersion is the operator-asserted monotonic build version signed into
+// this binary's claims (Claim.ClaimVersion), or "" for 0. It is set at build
+// time so the assertion is bound to the build, not to a runtime flag:
+//
+//	go build -ldflags "-X main.claimVersion=2" ./cmd/enclave-iroh
+//
+// Verifiers gate on it with -min-peer-version.
+var claimVersion string
+
 // peerConfig holds the T6 attestation-handshake flags: whether to run the
 // channel-bound handshake with the peer, and the policy applied to the peer's
 // claim.
@@ -76,6 +86,7 @@ type peerConfig struct {
 	Mode            string
 	RequireMaximal  bool
 	AllowUnattested bool
+	MinPeerVersion  uint64
 	PinCDHash       string
 	PinTeam         string
 	PinAttestKey    string
@@ -87,6 +98,7 @@ func registerPeerFlags(fs *flag.FlagSet) *peerConfig {
 	fs.StringVar(&pc.Mode, "attest-mode", "mutual", `handshake mode: "mutual", "prove", or "verify"`)
 	fs.BoolVar(&pc.RequireMaximal, "require-peer-maximal", false, "reject a peer whose code-signing is not maximal")
 	fs.BoolVar(&pc.AllowUnattested, "allow-unattested", false, "accept a verify-only peer as an explicit L0 result")
+	fs.Uint64Var(&pc.MinPeerVersion, "min-peer-version", 0, "reject a peer whose claim_version is below this")
 	fs.StringVar(&pc.PinCDHash, "pin-cdhash", "", "require the peer's cdhash to be this hex value")
 	fs.StringVar(&pc.PinTeam, "pin-team", "", "require the peer's signing Team ID to be this value")
 	fs.StringVar(&pc.PinAttestKey, "pin-attest-key", "", "require the peer's attestation public key to be this X9.63 hex")
@@ -112,6 +124,7 @@ func (pc *peerConfig) policy() enclaveiroh.Policy {
 	p := enclaveiroh.Policy{
 		RequireMaximal:  pc.RequireMaximal,
 		AllowUnattested: pc.AllowUnattested,
+		MinClaimVersion: pc.MinPeerVersion,
 	}
 	if pc.PinCDHash != "" {
 		p.AllowedCDHashes = []string{pc.PinCDHash}
@@ -133,7 +146,7 @@ func usage() {
 
 Run "enclave-iroh serve -h" or "enclave-iroh dial -h" for the full flag set,
 including -attest-peer and its policy flags (-require-peer-maximal, -pin-cdhash,
--pin-team, -pin-attest-key, -allow-unattested).
+-pin-team, -pin-attest-key, -min-peer-version, -allow-unattested).
 `)
 	os.Exit(2)
 }
@@ -450,6 +463,10 @@ func newHandshakeConfig(pc *peerConfig, selfID key.EndpointID, signer enclaveiro
 			return nil, fmt.Errorf("local code identity: %w", err)
 		}
 	}
+	ver, err := parseClaimVersion()
+	if err != nil {
+		return nil, err
+	}
 	return &enclaveiroh.HandshakeConfig{
 		SelfID:       selfID,
 		Mode:         mode,
@@ -457,8 +474,21 @@ func newHandshakeConfig(pc *peerConfig, selfID key.EndpointID, signer enclaveiro
 		Identity:     id,
 		Bundled:      hr.Bundled,
 		EphemeralKey: ephemeral,
+		ClaimVersion: ver,
 		Policy:       pc.policy(),
 	}, nil
+}
+
+// parseClaimVersion parses the build-time claimVersion ldflags var; unset is 0.
+func parseClaimVersion() (uint64, error) {
+	if claimVersion == "" {
+		return 0, nil
+	}
+	v, err := strconv.ParseUint(claimVersion, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("build-time claimVersion %q is not an unsigned integer: %w", claimVersion, err)
+	}
+	return v, nil
 }
 
 // inertPolicyFlags returns the names of the peer-policy flags that were set but
@@ -470,6 +500,9 @@ func (pc *peerConfig) inertPolicyFlags() []string {
 	}
 	if pc.AllowUnattested {
 		inert = append(inert, "-allow-unattested")
+	}
+	if pc.MinPeerVersion > 0 {
+		inert = append(inert, "-min-peer-version")
 	}
 	if pc.PinCDHash != "" {
 		inert = append(inert, "-pin-cdhash")

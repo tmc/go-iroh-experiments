@@ -75,7 +75,7 @@ The signed unit. Fields:
 
 | Field | Meaning |
 |-------|---------|
-| `context` | literal `"enclaveiroh-attest/1"` — domain separation |
+| `context` | literal `"enclaveiroh-attest/2"` — domain separation. Any SigningBytes layout change bumps the version (`/2` appended `claim_version` to the `/1` layout), so mismatched builds fail loudly at the context check instead of disagreeing silently on signed bytes |
 | `role` | `"dial"` \| `"serve"` (from `Conn.Side`) — kills reflection |
 | `local_endpoint` | signer's own endpoint ID |
 | `remote_endpoint` | the peer's endpoint ID as the signer sees it |
@@ -89,6 +89,7 @@ The signed unit. Fields:
 | `ephemeral_key` | endpoint key is ephemeral |
 | `attest_key` | X9.63 hex of the Enclave attestation public key |
 | `time` | RFC3339 |
+| `claim_version` | operator-asserted monotonic build version, baked in at build time (`-ldflags "-X main.claimVersion=N"`); 0 when unset. The signature makes the assertion unforgeable for the build; monotonicity across builds is the operator's promise (T11) |
 
 ### Signature encoding — length-prefixed binary, not JSON re-marshal
 
@@ -119,7 +120,8 @@ signed payload must avoid both matter here:
 
 Canonical layout: `uvarint(len)‖bytes` for each field in the table order, with
 `cs_flags` as a fixed 4-byte big-endian value, `bundled`/`ephemeral_key` as single
-bytes. String fields are signed as their **encoded wire forms** (base64 nonces,
+bytes, and `claim_version` as a trailing uvarint (appended at the end so the
+`/1` prefix is unchanged). String fields are signed as their **encoded wire forms** (base64 nonces,
 hex hashes and keys, endpoint-ID strings) — the length prefixes already make
 boundaries unambiguous, and signing the encoded forms keeps `SigningBytes`
 total (no decode errors). The wire **envelope** stays JSON (consistent with the
@@ -144,6 +146,8 @@ documented rationale rather than one being retrofitted onto the other.
 5. Policy (all optional; the caller's dial chooses L2 vs L3):
    - `RequireMaximal` — `cs_flags` satisfies the `codeSigning.Maximal()` predicate
    - `RequireBundled`, `ForbidEphemeralKey`
+   - `MinClaimVersion` — rollback threshold: reject `claim_version` below N
+     (the T11 lever that replaces enumerating superseded builds)
    - `AllowedTeamIDs`, `AllowedCDHashes` — pin sets
    - `AttestKeyPin` — exact pins, or a TOFU callback the app supplies. **TOFU
      caveat:** trust-on-first-use defends against a key *changing*, not against
@@ -158,7 +162,11 @@ documented rationale rather than one being retrofitted onto the other.
   endpoint ID.
 - **T9** — moves into `Policy` as verifier code (`RequireMaximal` at accept time),
   not just a local start-time flag.
-- **T11** — partially: `AllowedCDHashes` is the rollback lever.
+- **T11** — `AllowedCDHashes` pins the current build set, and
+  `claim_version` + `MinClaimVersion` reject rollback by threshold ("below N")
+  instead of by enumerating every superseded build. Monotonicity is
+  operator-asserted, and a forged version from an A2 peer is T7 like every
+  other claim field.
 - **T7** — unchanged and stays documented: every claim is self-reported.
 
 ## Self vs peer gates (open question 4)

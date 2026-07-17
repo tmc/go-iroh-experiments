@@ -19,8 +19,10 @@ import (
 
 // ClaimContext is the domain-separation string signed into every Claim. A
 // signature by the attestation key over these bytes can never be confused
-// with any other use of that key, and a version bump changes the context.
-const ClaimContext = "enclaveiroh-attest/1"
+// with any other use of that key. Any change to the SigningBytes layout must
+// bump the version here, or two builds silently disagree on the signed bytes:
+// /2 appended claim_version to the /1 layout.
+const ClaimContext = "enclaveiroh-attest/2"
 
 // Claim roles, from the QUIC side of the connection.
 const (
@@ -48,14 +50,21 @@ type Claim struct {
 	EphemeralKey   bool   `json:"ephemeral_key"`
 	AttestKey      string `json:"attest_key"` // X9.63 uncompressed P-256, hex
 	Time           string `json:"time"`       // RFC3339
+
+	// ClaimVersion is the operator-asserted monotonic build version, baked
+	// into the binary at build time (see the enclave-iroh ldflags recipe) and
+	// 0 when unset. The signature makes the assertion unforgeable for this
+	// build; monotonicity across builds is the operator's promise, not the
+	// protocol's. Verifiers gate on it with [Policy.MinClaimVersion].
+	ClaimVersion uint64 `json:"claim_version"`
 }
 
 // SigningBytes returns the canonical length-prefixed binary serialization the
 // signature covers: uvarint(len)‖bytes for each string field in wire order,
-// cs_flags as a fixed 4-byte big-endian word, and the bools as single bytes.
-// Length prefixes make field boundaries unambiguous (a crafted team_id cannot
-// shift into cdhash), and the fixed layout keeps signature validity
-// independent of any JSON marshaler.
+// cs_flags as a fixed 4-byte big-endian word, the bools as single bytes, and
+// claim_version as a trailing uvarint. Length prefixes make field boundaries
+// unambiguous (a crafted team_id cannot shift into cdhash), and the fixed
+// layout keeps signature validity independent of any JSON marshaler.
 func (c Claim) SigningBytes() []byte {
 	b := make([]byte, 0, 512)
 	for _, f := range []string{
@@ -69,6 +78,7 @@ func (c Claim) SigningBytes() []byte {
 	for _, f := range []string{c.AttestKey, c.Time} {
 		b = appendClaimField(b, f)
 	}
+	b = binary.AppendUvarint(b, c.ClaimVersion)
 	return b
 }
 
@@ -166,6 +176,12 @@ type Policy struct {
 	// ForbidEphemeralKey rejects peers whose endpoint identity is ephemeral.
 	ForbidEphemeralKey bool
 
+	// MinClaimVersion, when nonzero, rejects a peer whose claim_version is
+	// below it. The version is operator-asserted at build time, so this is a
+	// rollback threshold — "reject anything below N" — rather than a pin set
+	// that must enumerate every superseded build.
+	MinClaimVersion uint64
+
 	// AllowedTeamIDs, when non-empty, is the set of acceptable signing teams.
 	AllowedTeamIDs []string
 
@@ -201,6 +217,9 @@ func (p Policy) Check(c Claim) error {
 	}
 	if p.ForbidEphemeralKey && c.EphemeralKey {
 		return errors.New("policy: peer endpoint key is ephemeral")
+	}
+	if p.MinClaimVersion > 0 && c.ClaimVersion < p.MinClaimVersion {
+		return fmt.Errorf("policy: peer claim_version %d is below minimum %d", c.ClaimVersion, p.MinClaimVersion)
 	}
 	if len(p.AllowedTeamIDs) > 0 && !slices.Contains(p.AllowedTeamIDs, c.TeamID) {
 		return fmt.Errorf("policy: peer team_id %q is not allowed", c.TeamID)
