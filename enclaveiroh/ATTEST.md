@@ -149,9 +149,10 @@ documented rationale rather than one being retrofitted onto the other.
    - `MinClaimVersion` — rollback threshold: reject `claim_version` below N
      (the T11 lever that replaces enumerating superseded builds)
    - `AllowedTeamIDs`, `AllowedCDHashes` — pin sets
-   - `AttestKeyPin` — exact pins, or a TOFU callback the app supplies. **TOFU
-     caveat:** trust-on-first-use defends against a key *changing*, not against
-     impersonation on first contact; document it at the call site.
+   - `PinPeer` — a callback over the whole verified claim; `KnownPeers.Pin`
+     (JSON-file store, `-pin-file`) implements trust-on-first-use with it.
+     **TOFU caveat:** trust-on-first-use defends against a key *changing*, not
+     against impersonation on first contact.
    - `AllowUnattested` — accept a peer that sent no attestation (explicit L0).
 
 ## What it closes vs. the threat model

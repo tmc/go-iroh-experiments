@@ -194,11 +194,13 @@ type Policy struct {
 	// public keys, X9.63 lowercase hex.
 	PinnedAttestKeys []string
 
-	// AttestKeyPin, when set, is called with the peer's attestation public
-	// key (X9.63 bytes) and rejects the claim by returning an error. It is
-	// the hook for trust-on-first-use stores. TOFU defends against a pinned
-	// key changing, not against impersonation on first contact.
-	AttestKeyPin func(attestKey []byte) error
+	// PinPeer, when set, is called with the peer's verified claim and
+	// rejects it by returning an error. It is the hook for trust-on-first-use
+	// stores ([KnownPeers.Pin] matches it): the claim carries both the
+	// attestation key and the endpoint identity a store pins it under. TOFU
+	// defends against a pinned key changing, not against impersonation on
+	// first contact.
+	PinPeer func(c Claim) error
 
 	// AllowUnattested accepts a peer that sends no attestation (mode
 	// "verify"), downgrading that connection to an explicit L0 result. The
@@ -230,13 +232,9 @@ func (p Policy) Check(c Claim) error {
 	if len(p.PinnedAttestKeys) > 0 && !slices.Contains(p.PinnedAttestKeys, c.AttestKey) {
 		return errors.New("policy: peer attest_key is not pinned")
 	}
-	if p.AttestKeyPin != nil {
-		pub, err := hex.DecodeString(c.AttestKey)
-		if err != nil {
-			return fmt.Errorf("policy: decode attest_key: %w", err)
-		}
-		if err := p.AttestKeyPin(pub); err != nil {
-			return fmt.Errorf("policy: attest key pin: %w", err)
+	if p.PinPeer != nil {
+		if err := p.PinPeer(c); err != nil {
+			return fmt.Errorf("policy: pin peer: %w", err)
 		}
 	}
 	return nil
