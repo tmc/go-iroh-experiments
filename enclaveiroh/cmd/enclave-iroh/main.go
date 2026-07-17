@@ -168,7 +168,7 @@ func runServe(args []string) error {
 	fmt.Fprintf(report, "serving echo on %s; Ctrl-C to stop\n", ep.ID())
 
 	errc := make(chan error, 1)
-	go func() { errc <- serveEcho(ep, report) }()
+	go func() { errc <- serveEcho(ctx, ep, report) }()
 	select {
 	case <-ctx.Done():
 	case err := <-errc:
