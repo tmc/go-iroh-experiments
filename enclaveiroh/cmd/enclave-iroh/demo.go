@@ -17,20 +17,38 @@ import (
 // a single bidirectional iroh stream.
 const alpn = "enclaveiroh/echo/1"
 
-// serveEcho accepts streams on ep and echoes each newline-delimited line back,
-// uppercased, until the endpoint closes. It blocks.
-func serveEcho(ep *iroh.Endpoint, report io.Writer) error {
-	l, err := ep.ListenStreams()
-	if err != nil {
-		return err
-	}
-	defer l.Close()
+// serveEcho accepts connections on ep and serves the echo protocol on each,
+// echoing newline-delimited lines back uppercased until the endpoint closes. It
+// blocks. Accepting whole connections (rather than the flattened streams of
+// ListenStreams) keeps the per-connection boundary the attestation handshake
+// needs — the first stream of a connection is the handshake, later streams are
+// application streams.
+func serveEcho(ctx context.Context, ep *iroh.Endpoint, report io.Writer) error {
 	for {
-		conn, err := l.Accept()
+		conn, err := ep.Accept(ctx)
 		if err != nil {
 			return err
 		}
-		go handleEcho(conn, report)
+		go handleConn(ctx, conn, report)
+	}
+}
+
+// handleConn serves one peer connection. The first bidirectional stream is
+// reserved for the attestation handshake (T6, see ATTEST.md); until that lands,
+// every stream is treated as an application (echo) stream.
+func handleConn(ctx context.Context, conn *iroh.Conn, report io.Writer) {
+	defer conn.Close()
+	fmt.Fprintf(report, "conn: peer %s (alpn %s)\n", conn.RemoteID(), conn.ALPN())
+
+	// handshake seam: run Handshake(ctx, conn, cfg) on the first stream here,
+	// gate app streams on its result, then fall through to the app loop below.
+
+	for {
+		stream, err := conn.AcceptStreamConn(ctx)
+		if err != nil {
+			return
+		}
+		go handleEcho(stream, report)
 	}
 }
 
