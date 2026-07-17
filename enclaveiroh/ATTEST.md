@@ -119,8 +119,12 @@ signed payload must avoid both matter here:
 
 Canonical layout: `uvarint(len)‖bytes` for each field in the table order, with
 `cs_flags` as a fixed 4-byte big-endian value, `bundled`/`ephemeral_key` as single
-bytes. The wire **envelope** stays JSON (consistent with the existing record and
-easy to read); only the *signed bytes* are the canonical binary.
+bytes. String fields are signed as their **encoded wire forms** (base64 nonces,
+hex hashes and keys, endpoint-ID strings) — the length prefixes already make
+boundaries unambiguous, and signing the encoded forms keeps `SigningBytes`
+total (no decode errors). The wire **envelope** stays JSON (consistent with the
+existing record and easy to read); only the *signed bytes* are the canonical
+binary.
 
 The existing session-attestation record in `attest.go` keeps its JSON-re-marshal
 signature: it is a self-contained offline audit artifact with no channel-binding
@@ -167,14 +171,17 @@ them would conflate self-hygiene with peer-trust.
 ## API surface
 
 ```go
-// codeidentity_darwin.go / codeidentity_other.go   (owner: 8454)
-type CodeIdentity struct { CDHash []byte; TeamID string; Flags uint32 }
+// codeidentity.go (+ _darwin.go / _other.go)        (owner: 8454) — LANDED
+type CodeIdentity struct { CDHash []byte; TeamID, SigningID string; Flags uint32 }
 func LocalCodeIdentity() (CodeIdentity, error)        // csops; ErrUnsupported off-darwin
+func MaximalFlags(flags uint32) bool                  // portable flag predicate
 
-// claim + policy + portable verify                  (owner: 8454)
+// claim.go — claim + policy + portable verify       (owner: 8454) — LANDED
 type Claim struct { ... }
 func (c Claim) SigningBytes() []byte                  // canonical length-prefixed binary
-func VerifyClaim(c Claim, myID, remoteID key.EndpointID, alpn string, myNonce []byte) error
+func VerifyClaimSignature(c Claim, sig []byte) error  // stdlib ECDSA, any platform
+func VerifyClaim(c Claim, wantRole string, self, peer key.EndpointID,
+	alpn string, selfNonce, peerNonce []byte) error   // structural+binding+freshness
 type Policy struct { ... }
 func (p Policy) Check(c Claim) error
 
