@@ -9,8 +9,8 @@ import (
 	"io"
 	"net"
 
+	"github.com/tmc/go-iroh-experiments/enclaveiroh"
 	"github.com/tmc/go-iroh/iroh"
-	"github.com/tmc/go-iroh/netaddr"
 )
 
 // alpn is the ALPN for the echo demo: newline-delimited lines echoed back over
@@ -23,25 +23,36 @@ const alpn = "enclaveiroh/echo/1"
 // ListenStreams) keeps the per-connection boundary the attestation handshake
 // needs — the first stream of a connection is the handshake, later streams are
 // application streams.
-func serveEcho(ctx context.Context, ep *iroh.Endpoint, report io.Writer) error {
+//
+// When hsCfg is non-nil, every connection runs the T6 attestation handshake on
+// its first bidirectional stream before any application stream is served; a
+// connection whose handshake fails is dropped without reaching the echo loop.
+func serveEcho(ctx context.Context, ep *iroh.Endpoint, report io.Writer, hsCfg *enclaveiroh.HandshakeConfig) error {
 	for {
 		conn, err := ep.Accept(ctx)
 		if err != nil {
 			return err
 		}
-		go handleConn(ctx, conn, report)
+		go handleConn(ctx, conn, report, hsCfg)
 	}
 }
 
-// handleConn serves one peer connection. The first bidirectional stream is
-// reserved for the attestation handshake (T6, see ATTEST.md); until that lands,
-// every stream is treated as an application (echo) stream.
-func handleConn(ctx context.Context, conn *iroh.Conn, report io.Writer) {
+// handleConn serves one peer connection. When hsCfg is set, the first
+// bidirectional stream carries the attestation handshake (T6, see ATTEST.md):
+// it must complete before any application stream is accepted, and a failure
+// closes the connection. Later streams are application (echo) streams.
+func handleConn(ctx context.Context, conn *iroh.Conn, report io.Writer, hsCfg *enclaveiroh.HandshakeConfig) {
 	defer conn.Close()
 	fmt.Fprintf(report, "conn: peer %s (alpn %s)\n", conn.RemoteID(), conn.ALPN())
 
-	// handshake seam: run Handshake(ctx, conn, cfg) on the first stream here,
-	// gate app streams on its result, then fall through to the app loop below.
+	if hsCfg != nil {
+		att, err := enclaveiroh.Handshake(ctx, conn, *hsCfg)
+		if err != nil {
+			fmt.Fprintf(report, "conn: peer %s rejected: %v\n", conn.RemoteID(), err)
+			return
+		}
+		logPeerAttestation(report, conn.RemoteID(), att)
+	}
 
 	for {
 		stream, err := conn.AcceptStreamConn(ctx)
@@ -73,14 +84,11 @@ func handleEcho(conn net.Conn, report io.Writer) {
 	}
 }
 
-// dialEcho connects to addr's endpoint, sends each message on its own line, and
-// returns the echoed replies in order.
-func dialEcho(ctx context.Context, ep *iroh.Endpoint, addr netaddr.EndpointAddr, messages []string) ([]string, error) {
-	conn, err := ep.Connect(ctx, addr, alpn)
-	if err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
-	}
-	defer conn.Close()
+// echoOverConn opens an application stream on an already-connected (and, when
+// attestation is enabled, already-attested) connection, sends each message on
+// its own line, and returns the echoed replies in order. The caller owns conn's
+// lifetime, including running the handshake before this is called.
+func echoOverConn(ctx context.Context, conn *iroh.Conn, messages []string) ([]string, error) {
 	stream, err := conn.OpenStreamConn(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open stream: %w", err)
