@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/tmc/go-iroh/gossip"
 	"golang.org/x/mod/sumdb/note"
@@ -80,7 +81,9 @@ func (w *Witness) cosign(ctx context.Context, msg []byte) ([]byte, error) {
 			hashes := w.src.hashReaderForTree(ctx, cp.Tree)
 			proof, err := tlog.ProveTree(cp.Tree.N, w.head.Tree.N, hashes)
 			if err != nil {
-				return nil, fmt.Errorf("tlogiroh: prove consistency: %w", err)
+				// Proving reads tiles through the source; failure here means
+				// the replica lacks the new tree, not that the tree is bad.
+				return nil, fmt.Errorf("%w: prove consistency: %w", errSourceStale, err)
 			}
 			if err := tlog.CheckTree(proof, cp.Tree.N, cp.Tree.Hash, w.head.Tree.N, w.head.Tree.Hash); err != nil {
 				return nil, fmt.Errorf("tlogiroh: check consistency: %w", err)
@@ -100,23 +103,56 @@ func (w *Witness) cosign(ctx context.Context, msg []byte) ([]byte, error) {
 }
 
 // Run subscribes to checkpoint announcements on the gossip topic, cosigns
-// each acceptable checkpoint, and broadcasts the cosigned message. Detected
-// equivocations are broadcast as proofs. Run returns when ctx is done or
-// the topic closes; close the topic after canceling ctx to release the
-// event stream promptly.
+// each acceptable checkpoint, and broadcasts the cosigned message. A
+// checkpoint that cannot be verified yet because the source has not caught
+// up to it is retried periodically until it is cosigned or superseded.
+// Detected equivocations are broadcast as proofs. Run returns when ctx is
+// done or the topic closes; close the topic after canceling ctx to release
+// the event stream promptly.
 func (w *Witness) Run(ctx context.Context, topic *gossip.Topic) error {
 	return w.run(ctx, topic)
 }
 
 // run is the regeneratable core of Run.
 func (w *Witness) run(ctx context.Context, topic *gossip.Topic) error {
-	flooded := make(map[string]bool) // equivocation proofs already rebroadcast
+	flooded := make(map[string]bool)   // equivocation proofs already rebroadcast
+	pending := make(map[string][]byte) // checkpoint text -> message awaiting a fresher source
+	// process attempts payload, filing it under its checkpoint text in
+	// pending when a later retry may succeed.
+	process := func(text string, payload []byte) {
+		cosigned, err := w.Cosign(ctx, payload)
+		equiv, isEquiv := errors.AsType[*EquivocationError](err)
+		switch {
+		case err == nil:
+			delete(pending, text)
+			topic.Broadcast(ctx, envelope(envCheckpoint, cosigned))
+		case errors.Is(err, errSourceStale):
+			pending[text] = payload
+		case isEquiv:
+			delete(pending, text)
+			if data, err := equiv.Proof.MarshalBinary(); err == nil && !flooded[string(data)] {
+				flooded[string(data)] = true
+				topic.Broadcast(ctx, envelope(envEquivocation, data))
+			}
+		default:
+			// Rollback, origin, and signature failures are stale or
+			// malicious announcements: drop them and keep running.
+			delete(pending, text)
+		}
+	}
+	retry := time.NewTicker(staleRetryInterval)
+	defer retry.Stop()
 	events := topicMessages(ctx, topic)
 	for {
 		var content []byte
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-retry.C:
+			for text, payload := range pending {
+				process(text, payload)
+			}
+			continue
 		case msg, ok := <-events:
 			if !ok {
 				return nil
@@ -141,19 +177,11 @@ func (w *Witness) run(ctx context.Context, topic *gossip.Topic) error {
 				topic.Broadcast(ctx, envelope(envEquivocation, payload))
 			}
 		case envCheckpoint:
-			cosigned, err := w.Cosign(ctx, payload)
-			equiv, isEquiv := errors.AsType[*EquivocationError](err)
-			switch {
-			case err == nil:
-				topic.Broadcast(ctx, envelope(envCheckpoint, cosigned))
-			case isEquiv:
-				if data, err := equiv.Proof.MarshalBinary(); err == nil && !flooded[string(data)] {
-					flooded[string(data)] = true
-					topic.Broadcast(ctx, envelope(envEquivocation, data))
-				}
+			text, _, err := splitNote(payload)
+			if err != nil {
+				continue
 			}
-			// Rollback, origin, and signature failures are stale or
-			// malicious announcements: ignore them and keep running.
+			process(string(text), payload)
 		}
 	}
 }

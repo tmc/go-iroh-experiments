@@ -6,10 +6,22 @@ import (
 	"fmt"
 	"iter"
 	"sync"
+	"time"
 
 	"github.com/tmc/go-iroh/gossip"
 	"golang.org/x/mod/sumdb/tlog"
 )
+
+// errSourceStale marks a verification failure that a fresher source may
+// resolve: the doc replica has not yet caught up to the announced tree.
+// Gossip deduplicates the byte-identical re-announcements of a deterministic
+// checkpoint, so each peer sees a given checkpoint once; Watch and Run park
+// checkpoints that fail this way and retry them as the replica syncs.
+var errSourceStale = errors.New("tlogiroh: source not caught up")
+
+// staleRetryInterval is how often Watch and Run retry parked checkpoints.
+// It is a variable to let tests shorten it.
+var staleRetryInterval = 2 * time.Second
 
 // A Client reads and verifies a transparency log against a Policy. It
 // stores the latest accepted signed checkpoint (the head) in memory; use
@@ -106,7 +118,9 @@ func (c *Client) update(ctx context.Context, cp Checkpoint, msg []byte) (Checkpo
 			hashes := c.src.hashReaderForTree(ctx, cp.Tree)
 			proof, err := tlog.ProveTree(cp.Tree.N, c.head.Tree.N, hashes)
 			if err != nil {
-				return Checkpoint{}, fmt.Errorf("tlogiroh: prove consistency: %w", err)
+				// Proving reads tiles through the source; failure here means
+				// the replica lacks the new tree, not that the tree is bad.
+				return Checkpoint{}, fmt.Errorf("%w: prove consistency: %w", errSourceStale, err)
 			}
 			if err := tlog.CheckTree(proof, cp.Tree.N, cp.Tree.Hash, c.head.Tree.N, c.head.Tree.Hash); err != nil {
 				return Checkpoint{}, fmt.Errorf("tlogiroh: check consistency: %w", err)
@@ -162,11 +176,13 @@ func (c *Client) entry(ctx context.Context, head Checkpoint, index int64) ([]byt
 
 // Watch consumes checkpoint announcements from the gossip topic, merging
 // witness cosignatures for identical checkpoints, and yields each
-// checkpoint once it satisfies the policy and Update accepts it. If it
-// observes or receives proof of equivocation it broadcasts the proof on the
-// topic and yields the *EquivocationError. Watch returns when ctx is done
-// or the topic closes; close the topic after canceling ctx to release the
-// event stream promptly.
+// checkpoint once it satisfies the policy and Update accepts it. A
+// checkpoint that cannot be verified yet because the source has not caught
+// up to it is retried periodically until it is accepted or superseded. If
+// Watch observes or receives proof of equivocation it broadcasts the proof
+// on the topic and yields the *EquivocationError. Watch returns when ctx is
+// done or the topic closes; close the topic after canceling ctx to release
+// the event stream promptly.
 func (c *Client) Watch(ctx context.Context, topic *gossip.Topic) iter.Seq2[Checkpoint, error] {
 	return func(yield func(Checkpoint, error) bool) {
 		c.watch(ctx, topic, yield)
@@ -175,15 +191,58 @@ func (c *Client) Watch(ctx context.Context, topic *gossip.Topic) iter.Seq2[Check
 
 // watch is the regeneratable core of Watch.
 func (c *Client) watch(ctx context.Context, topic *gossip.Topic, yield func(Checkpoint, error) bool) {
-	pending := make(map[string][]byte) // checkpoint text -> best merged message
+	pending := make(map[string][]byte) // checkpoint text -> best merged message, awaiting cosignatures or a fresher source
 	flooded := make(map[string]bool)   // equivocation proofs already rebroadcast
 	var lastYielded Checkpoint
+	// process attempts msg, filing it under its checkpoint text in pending
+	// when a later retry may succeed. It reports whether to keep watching.
+	// Only messages that carry a valid operator signature can enter pending:
+	// threshold and staleness are diagnosed after the note is opened.
+	process := func(text string, msg []byte) bool {
+		cp, err := c.Update(ctx, msg)
+		equiv, isEquiv := errors.AsType[*EquivocationError](err)
+		switch {
+		case err == nil:
+			delete(pending, text)
+			if cp != lastYielded {
+				lastYielded = cp
+				if !yield(cp, nil) {
+					return false
+				}
+			}
+		case errors.Is(err, ErrWitnessThreshold), errors.Is(err, errSourceStale):
+			pending[text] = msg
+		case isEquiv:
+			delete(pending, text)
+			if data, err := equiv.Proof.MarshalBinary(); err == nil && !flooded[string(data)] {
+				flooded[string(data)] = true
+				topic.Broadcast(ctx, envelope(envEquivocation, data))
+			}
+			if !yield(Checkpoint{}, equiv) {
+				return false
+			}
+		default:
+			// Rollback, origin, and signature failures are stale or
+			// malicious announcements: drop them and keep watching.
+			delete(pending, text)
+		}
+		return true
+	}
+	retry := time.NewTicker(staleRetryInterval)
+	defer retry.Stop()
 	events := topicMessages(ctx, topic)
 	for {
 		var content []byte
 		select {
 		case <-ctx.Done():
 			return
+		case <-retry.C:
+			for text, msg := range pending {
+				if !process(text, msg) {
+					return
+				}
+			}
+			continue
 		case msg, ok := <-events:
 			if !ok {
 				return
@@ -221,30 +280,9 @@ func (c *Client) watch(ctx context.Context, topic *gossip.Topic, yield func(Chec
 					msg = merged
 				}
 			}
-			cp, err := c.Update(ctx, msg)
-			equiv, isEquiv := errors.AsType[*EquivocationError](err)
-			switch {
-			case err == nil:
-				delete(pending, string(text))
-				if cp != lastYielded {
-					lastYielded = cp
-					if !yield(cp, nil) {
-						return
-					}
-				}
-			case errors.Is(err, ErrWitnessThreshold):
-				pending[string(text)] = msg
-			case isEquiv:
-				if data, err := equiv.Proof.MarshalBinary(); err == nil && !flooded[string(data)] {
-					flooded[string(data)] = true
-					topic.Broadcast(ctx, envelope(envEquivocation, data))
-				}
-				if !yield(Checkpoint{}, equiv) {
-					return
-				}
+			if !process(string(text), msg) {
+				return
 			}
-			// Rollback, origin, and signature failures are stale or
-			// malicious announcements: ignore them and keep watching.
 		}
 	}
 }

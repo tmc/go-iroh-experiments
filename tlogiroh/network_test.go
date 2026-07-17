@@ -232,3 +232,112 @@ func TestNetworkCosignEquivocation(t *testing.T) {
 		t.Fatalf("witness head after equivocation = %+v %v, want size 12", head, ok)
 	}
 }
+
+// TestNetworkStaleAnnounceRetry reproduces the multi-process race: the
+// operator announces growth before the witness and client replicas have
+// synced the new tiles. Gossip deduplicates the byte-identical
+// re-announcement of a deterministic checkpoint, so each peer sees it once;
+// the witness and client must park it and retry internally once their
+// replicas catch up.
+func TestNetworkStaleAnnounceRetry(t *testing.T) {
+	if testing.Short() {
+		t.Skip("network test")
+	}
+	defer func(d time.Duration) { staleRetryInterval = d }(staleRetryInterval)
+	staleRetryInterval = 200 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	op, opVerifier, _ := newTestLog(t)
+	opNode := newTestNode(t, ctx, map[string]iroh.ProtocolHandler{
+		blobs.ALPN: blobStreamHandler{store: op.Blobs()},
+		docs.ALPN:  &docs.Handler{Store: op.Doc(), BlobStore: op.Blobs()},
+	})
+	witnessNode := newTestNode(t, ctx, nil)
+	clientNode := newTestNode(t, ctx, nil)
+
+	witnessDoc := docs.NewMemoryStore()
+	witnessSrc := Source{
+		Doc:       witnessDoc,
+		Namespace: op.Namespace(),
+		Author:    op.Author(),
+		Get:       DialBlobGetter(witnessNode.ep, opNode.addr()),
+	}
+	clientDoc := docs.NewMemoryStore()
+	clientSrc := Source{
+		Doc:       clientDoc,
+		Namespace: op.Namespace(),
+		Author:    op.Author(),
+		Get:       DialBlobGetter(clientNode.ep, opNode.addr()),
+	}
+	resync := func() {
+		t.Helper()
+		for _, r := range []struct {
+			ep    *iroh.Endpoint
+			store *docs.MemoryStore
+		}{{witnessNode.ep, witnessDoc}, {clientNode.ep, clientDoc}} {
+			if _, err := docs.Sync(ctx, r.ep, opNode.addr(), op.Namespace(), r.store, nil, docs.DefaultSyncConfig()); err != nil {
+				t.Fatalf("docs sync: %v", err)
+			}
+		}
+	}
+
+	witness, witnessVerifier := newTestWitness(t, "witness.net", opVerifier, witnessSrc)
+	policy, err := NewPolicy(testOrigin, opVerifier, []note.Verifier{witnessVerifier}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := NewClient(policy, clientSrc)
+
+	opTopic := opNode.join(t, ctx, nil)
+	bootstrap := []netaddr.EndpointAddr{opNode.addr()}
+	witnessTopic := witnessNode.join(t, ctx, bootstrap)
+	clientTopic := clientNode.join(t, ctx, bootstrap)
+	for _, topic := range []*gossip.Topic{witnessTopic, clientTopic, opTopic} {
+		if err := topic.Joined(ctx); err != nil {
+			t.Fatalf("topic join: %v", err)
+		}
+	}
+
+	go witness.Run(ctx, witnessTopic)
+	heads := make(chan Checkpoint, 16)
+	go func() {
+		for cp, err := range client.Watch(ctx, clientTopic) {
+			if err == nil {
+				heads <- cp
+			}
+		}
+	}()
+	waitHead := func(size int64) {
+		t.Helper()
+		for {
+			select {
+			case cp := <-heads:
+				if cp.Tree.N == size {
+					return
+				}
+			case <-ctx.Done():
+				t.Fatalf("timed out waiting for accepted checkpoint of size %d", size)
+			}
+		}
+	}
+
+	appendAndPublish(t, op, 5)
+	resync()
+	if err := op.Announce(ctx, opTopic); err != nil {
+		t.Fatal(err)
+	}
+	waitHead(5)
+
+	// Grow and announce exactly once, before the replicas sync: every
+	// reader parks the checkpoint. Give the announcement time to arrive,
+	// then sync and let the retries accept it.
+	appendAndPublish(t, op, 12)
+	if err := op.Announce(ctx, opTopic); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Second)
+	resync()
+	waitHead(12)
+}
