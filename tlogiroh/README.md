@@ -33,6 +33,34 @@ injected split view caught as an equivocation — with:
 go test -run TestNetworkCosignEquivocation -v
 ```
 
+## cmd/tlog-iroh
+
+The `tlog-iroh` command runs the roles as real processes. `tlog-iroh demo`
+plays the whole flow in one process on loopback, including the equivocating
+twin. For separate processes:
+
+```sh
+# terminal 1: serve a log; type entries, one per line
+tlog-iroh operator -origin example.org/log
+
+# terminal 2: cosign announcements (paste the ticket and key it printed)
+tlog-iroh witness -ticket <ticket> -operator-key <vkey>
+
+# terminal 3: verify with a 1-of-1 witness policy, persisting the head
+tlog-iroh watch -ticket <ticket> -operator-key <vkey> \
+    -witness-key <witness-vkey> -head head.note
+
+# fetch entry 1, verifying its inclusion proof against the saved head
+tlog-iroh get -ticket <ticket> -operator-key <vkey> \
+    -witness-key <witness-vkey> -head head.note -index 1
+```
+
+Deterministic checkpoints re-announce as byte-identical gossip messages,
+which iroh-gossip deduplicates: each peer sees a given checkpoint once. A
+reader whose doc replica has not yet caught up therefore parks the
+checkpoint and retries as the replica syncs (`Watch` and `Run` do this
+internally).
+
 Deliberate non-goals for this experiment: freshness/freeze-attack
 mitigation (checkpoints carry no timestamp), tile pruning, operator crash
 recovery, and admission control. See `doc.go`.
