@@ -319,7 +319,9 @@ server-side against Apple with an ES256 JWT (Team ID + DeviceCheck key). It is a
 genuine-Apple-device *anti-abuse* signal (two per-device bits plus a fraud
 timestamp), **not** hardware or code attestation. It can gate "is this plausibly
 a real Apple device" cheaply, but it does not bind code identity and does not
-move a peer up the ladder.
+move a peer up the ladder. A portable, framework-free Go client for the server
+contract (the ES256 JWT plus `query_two_bits`) is at
+`github.com/tmc/apple/examples/devicecheck/devicecheck-demo` (`server.go`).
 
 ## Operational notes
 
