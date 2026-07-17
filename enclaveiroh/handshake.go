@@ -60,6 +60,9 @@ func parseMode(s string) (Mode, error) {
 }
 
 const (
+	// helloVersion is the handshake wire-protocol version. Both sides must
+	// agree; it is distinct from the ClaimContext version in the signed payload.
+	helloVersion = 1
 	// nonceSize is the length of each Hello nonce.
 	nonceSize = 32
 	// maxFrameSize caps a handshake frame, so a hostile length prefix cannot
@@ -114,9 +117,13 @@ type HandshakeConfig struct {
 	Policy Policy
 }
 
-// PeerAttestation is the verified outcome of a handshake. Attested is false for
-// an explicit L0 result — the peer sent no attestation and policy allowed it
-// (AllowUnattested); Claim is then zero.
+// PeerAttestation is the verified outcome of a handshake:
+//   - a verified peer claim (Attested true, Claim set);
+//   - an explicit L0 result (Attested false, zero Claim) when the peer sent no
+//     attestation and policy allowed it via AllowUnattested.
+//
+// Handshake returns a nil *PeerAttestation in prove mode, where this side
+// attests but does not evaluate the peer at all.
 type PeerAttestation struct {
 	Attested bool
 	Claim    Claim
@@ -166,13 +173,16 @@ func runHandshake(ctx context.Context, stream net.Conn, dialer bool, peerID key.
 	if _, err := rand.Read(myNonce); err != nil {
 		return nil, err
 	}
-	myHello := hello{V: 1, Nonce: base64.StdEncoding.EncodeToString(myNonce), Mode: cfg.Mode.String()}
+	myHello := hello{V: helloVersion, Nonce: base64.StdEncoding.EncodeToString(myNonce), Mode: cfg.Mode.String()}
 	var peerHello hello
 	if err := exchange(dialer,
 		func() error { return writeFrame(stream, myHello) },
 		func() error { return readFrame(stream, &peerHello) },
 	); err != nil {
 		return nil, fmt.Errorf("handshake hello: %w", err)
+	}
+	if peerHello.V != helloVersion {
+		return nil, fmt.Errorf("handshake: peer protocol version %d, want %d", peerHello.V, helloVersion)
 	}
 	peerMode, err := parseMode(peerHello.Mode)
 	if err != nil {
@@ -189,6 +199,8 @@ func runHandshake(ctx context.Context, stream net.Conn, dialer bool, peerID key.
 	sendClaim := cfg.Mode.attests()
 	expectClaim := cfg.Mode.verifies() && peerMode.attests()
 
+	// peerAtt stays nil in prove mode (this side does not evaluate the peer);
+	// it is set to an explicit L0 result or the verified attestation otherwise.
 	var peerAtt *PeerAttestation
 	var verifyErr error
 
@@ -217,7 +229,7 @@ func runHandshake(ctx context.Context, stream net.Conn, dialer bool, peerID key.
 				verifyErr = fmt.Errorf("peer sent no attestation (mode %s) and AllowUnattested is false", peerMode)
 				return nil
 			}
-			peerAtt = &PeerAttestation{Attested: false}
+			peerAtt = &PeerAttestation{Attested: false} // explicit L0
 			return nil
 		}
 		var wc wireClaim
