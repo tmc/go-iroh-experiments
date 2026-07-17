@@ -90,6 +90,7 @@ type peerConfig struct {
 	PinCDHash       string
 	PinTeam         string
 	PinAttestKey    string
+	PinFile         string
 }
 
 func registerPeerFlags(fs *flag.FlagSet) *peerConfig {
@@ -102,6 +103,7 @@ func registerPeerFlags(fs *flag.FlagSet) *peerConfig {
 	fs.StringVar(&pc.PinCDHash, "pin-cdhash", "", "require the peer's cdhash to be this hex value")
 	fs.StringVar(&pc.PinTeam, "pin-team", "", "require the peer's signing Team ID to be this value")
 	fs.StringVar(&pc.PinAttestKey, "pin-attest-key", "", "require the peer's attestation public key to be this X9.63 hex")
+	fs.StringVar(&pc.PinFile, "pin-file", "", "trust-on-first-use store: record each endpoint's attestation key at this path, reject a later key change")
 	return pc
 }
 
@@ -146,7 +148,7 @@ func usage() {
 
 Run "enclave-iroh serve -h" or "enclave-iroh dial -h" for the full flag set,
 including -attest-peer and its policy flags (-require-peer-maximal, -pin-cdhash,
--pin-team, -pin-attest-key, -min-peer-version, -allow-unattested).
+-pin-team, -pin-attest-key, -pin-file, -min-peer-version, -allow-unattested).
 `)
 	os.Exit(2)
 }
@@ -467,6 +469,15 @@ func newHandshakeConfig(pc *peerConfig, selfID key.EndpointID, signer enclaveiro
 	if err != nil {
 		return nil, err
 	}
+	policy := pc.policy()
+	if pc.PinFile != "" && mode != enclaveiroh.ModeProve {
+		kp, err := enclaveiroh.LoadKnownPeers(pc.PinFile)
+		if err != nil {
+			return nil, err
+		}
+		policy.PinPeer = kp.Pin
+		fmt.Fprintf(report, "attest: trust-on-first-use store %s (first contact records, later key change rejects)\n", pc.PinFile)
+	}
 	return &enclaveiroh.HandshakeConfig{
 		SelfID:       selfID,
 		Mode:         mode,
@@ -475,7 +486,7 @@ func newHandshakeConfig(pc *peerConfig, selfID key.EndpointID, signer enclaveiro
 		Bundled:      hr.Bundled,
 		EphemeralKey: ephemeral,
 		ClaimVersion: ver,
-		Policy:       pc.policy(),
+		Policy:       policy,
 	}, nil
 }
 
@@ -512,6 +523,9 @@ func (pc *peerConfig) inertPolicyFlags() []string {
 	}
 	if pc.PinAttestKey != "" {
 		inert = append(inert, "-pin-attest-key")
+	}
+	if pc.PinFile != "" {
+		inert = append(inert, "-pin-file")
 	}
 	return inert
 }

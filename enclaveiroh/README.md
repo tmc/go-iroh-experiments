@@ -88,7 +88,11 @@ hello enclave -> HELLO ENCLAVE
 
 The policy flags choose how much to require of the peer: `-require-peer-maximal`
 rejects a peer without a full Hardened Runtime signature; `-pin-cdhash`,
-`-pin-team`, and `-pin-attest-key` pin the exact code, team, or key. An ad-hoc
+`-pin-team`, and `-pin-attest-key` pin the exact code, team, or key;
+`-pin-file` records each endpoint's attestation key on first contact and
+rejects a later change (trust-on-first-use — it cannot vet the first contact
+itself); `-min-peer-version` rejects claims below an operator-asserted build
+version baked in with `-ldflags "-X main.claimVersion=N"`. An ad-hoc
 `go build` binary (as above) reports `team ""` and `maximal=false`, and a
 rebuild changes the cdhash — that is the cdhash doing its job. `-attest-mode
 prove` attests without evaluating the peer (and warns if policy flags are set,

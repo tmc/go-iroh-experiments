@@ -252,8 +252,8 @@ func TestPolicyCheck(t *testing.T) {
 		{"cdhash pin rejects (rollback)", Policy{AllowedCDHashes: []string{strings.Repeat("ee", 20)}}, func() Claim { return c }, false},
 		{"attest key pin ok", Policy{PinnedAttestKeys: []string{c.AttestKey}}, func() Claim { return c }, true},
 		{"attest key pin rejects", Policy{PinnedAttestKeys: []string{strings.Repeat("00", 65)}}, func() Claim { return c }, false},
-		{"pin callback ok", Policy{AttestKeyPin: func([]byte) error { return nil }}, func() Claim { return c }, true},
-		{"pin callback rejects", Policy{AttestKeyPin: func([]byte) error { return errors.New("key changed") }}, func() Claim { return c }, false},
+		{"pin callback ok", Policy{PinPeer: func(Claim) error { return nil }}, func() Claim { return c }, true},
+		{"pin callback rejects", Policy{PinPeer: func(Claim) error { return errors.New("key changed") }}, func() Claim { return c }, false},
 	}
 	for _, tt := range tests {
 		err := tt.policy.Check(tt.claim())
