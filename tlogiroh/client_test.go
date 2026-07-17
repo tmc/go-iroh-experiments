@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/tmc/go-iroh/blobs"
+	"github.com/tmc/go-iroh/docs"
 )
 
 // appendAndPublish appends entries numbered [size(op), n) and publishes,
@@ -193,5 +194,46 @@ func TestClientTamperedEntry(t *testing.T) {
 	}
 	if _, err := client.Entry(ctx, 4); err != nil {
 		t.Fatalf("Entry(4) with honest blob failed: %v", err)
+	}
+}
+
+// TestClientUpdateStaleSource pins the stale-source classification: a
+// checkpoint larger than the head fails with errSourceStale while the doc
+// replica lacks the new tiles, leaves the head unchanged, and verifies once
+// the replica catches up.
+func TestClientUpdateStaleSource(t *testing.T) {
+	op, _, policy := newTestLog(t)
+	ctx := context.Background()
+
+	msg5 := appendAndPublish(t, op, 5)
+	replica := docs.NewMemoryStore()
+	copyDoc := func() {
+		for _, entry := range op.Doc().Entries() {
+			replica.Put(entry)
+		}
+	}
+	copyDoc()
+	src := op.Source()
+	src.Doc = replica
+	client := NewClient(policy, src)
+	if _, err := client.Update(ctx, msg5); err != nil {
+		t.Fatal(err)
+	}
+
+	msg12 := appendAndPublish(t, op, 12)
+	if _, err := client.Update(ctx, msg12); !errors.Is(err, errSourceStale) {
+		t.Fatalf("Update with stale replica = %v, want errSourceStale", err)
+	}
+	if head, _ := client.Head(); head.Tree.N != 5 {
+		t.Fatalf("head after stale update = %d, want 5", head.Tree.N)
+	}
+
+	copyDoc()
+	cp, err := client.Update(ctx, msg12)
+	if err != nil {
+		t.Fatalf("Update after replica caught up: %v", err)
+	}
+	if cp.Tree.N != 12 {
+		t.Fatalf("updated head = %d, want 12", cp.Tree.N)
 	}
 }
