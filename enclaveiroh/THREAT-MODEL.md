@@ -264,14 +264,17 @@ mitigation in place today (▣) or proposed (▢) or none (□), and the residua
 ### T11 — Stale attestation / version rollback
 - **Adversary:** A1, A2
 - **Impact:** AS5 — presenting an old, valid attestation for a superseded build
-- **Mitigation ▣ / ▢ (partial):** the pin lever is in place — `Policy`'s
-  `AllowedCDHashes` (and `-pin-cdhash`) let a verifier accept only its current
-  cdhash set and reject known-superseded ones, and the per-connection nonces
-  (T6, in place) stop a captured attestation being replayed. Still proposed: a
-  monotonic build/version field in the signed Claim so rollback is rejected by
-  ordering rather than only by an out-of-band pin set.
-- **Residual:** verifier must keep its pin set current; without the version
-  field, a superseded-but-still-pinned cdhash is not caught by the protocol.
+- **Mitigation ▣ (in place):** two levers. `Policy`'s `AllowedCDHashes` (and
+  `-pin-cdhash`) let a verifier accept only its current cdhash set, and the
+  signed `claim_version` — an operator-asserted build version baked into the
+  binary at build time (`-ldflags "-X main.claimVersion=N"`) — lets
+  `Policy.MinClaimVersion` (`-min-peer-version`) reject rollback by threshold:
+  "below N" replaces enumerating every superseded build. The per-connection
+  nonces (T6) stop a captured attestation being replayed.
+- **Residual:** monotonicity is the operator's promise, not the protocol's — a
+  build whose version was never bumped is indistinguishable from its
+  predecessor, and an A2 peer can claim any version it likes (T7). The
+  threshold must still be raised when builds are superseded.
 
 ### T12 — Enclave or hardware compromise
 - **Adversary:** A4 (with a kernel/firmware break), A5

@@ -120,7 +120,7 @@ func TestClaimSignatureCoversEveryField(t *testing.T) {
 	c, sig, _, _, _, _ := testClaim(t, signer)
 
 	mutations := map[string]func(*Claim){
-		"context":         func(c *Claim) { c.Context = "enclaveiroh-attest/2" },
+		"context":         func(c *Claim) { c.Context = "enclaveiroh-attest/1" },
 		"role":            func(c *Claim) { c.Role = RoleDial },
 		"local_endpoint":  func(c *Claim) { c.LocalEndpoint = c.RemoteEndpoint },
 		"remote_endpoint": func(c *Claim) { c.RemoteEndpoint = c.LocalEndpoint },
@@ -133,6 +133,7 @@ func TestClaimSignatureCoversEveryField(t *testing.T) {
 		"bundled":         func(c *Claim) { c.Bundled = !c.Bundled },
 		"ephemeral_key":   func(c *Claim) { c.EphemeralKey = !c.EphemeralKey },
 		"time":            func(c *Claim) { c.Time = "2000-01-01T00:00:00Z" },
+		"claim_version":   func(c *Claim) { c.ClaimVersion++ },
 	}
 	for name, mutate := range mutations {
 		mutated := c
@@ -187,6 +188,11 @@ func TestVerifyClaim(t *testing.T) {
 			bad.Context = "enclaveiroh-attest/0"
 			return VerifyClaim(bad, RoleServe, self, peer, c.ALPN, selfNonce, peerNonce)
 		}},
+		{"superseded /1 context", func() error {
+			bad := c
+			bad.Context = "enclaveiroh-attest/1"
+			return VerifyClaim(bad, RoleServe, self, peer, c.ALPN, selfNonce, peerNonce)
+		}},
 	}
 	for _, tt := range tests {
 		if err := tt.call(); err == nil {
@@ -228,6 +234,18 @@ func TestPolicyCheck(t *testing.T) {
 			bad.EphemeralKey = true
 			return bad
 		}, false},
+		{"version threshold ok at minimum", Policy{MinClaimVersion: 2}, func() Claim {
+			v := c
+			v.ClaimVersion = 2
+			return v
+		}, true},
+		{"version threshold rejects below (rollback)", Policy{MinClaimVersion: 2}, func() Claim {
+			v := c
+			v.ClaimVersion = 1
+			return v
+		}, false},
+		{"zero threshold accepts unversioned", Policy{}, func() Claim { return c }, true},
+		{"threshold rejects unversioned", Policy{MinClaimVersion: 1}, func() Claim { return c }, false},
 		{"team pin ok", Policy{AllowedTeamIDs: []string{"TEAMID9999"}}, func() Claim { return c }, true},
 		{"team pin rejects", Policy{AllowedTeamIDs: []string{"OTHERTEAM1"}}, func() Claim { return c }, false},
 		{"cdhash pin ok", Policy{AllowedCDHashes: []string{strings.Repeat("ab", 20)}}, func() Claim { return c }, true},
