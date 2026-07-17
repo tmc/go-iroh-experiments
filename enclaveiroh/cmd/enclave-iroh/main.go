@@ -38,6 +38,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -126,9 +127,13 @@ func (pc *peerConfig) policy() enclaveiroh.Policy {
 
 func usage() {
 	fmt.Fprint(os.Stderr, `usage:
-	enclave-iroh serve [-tag <id>] [-ephemeral] [-bind <addr>] [-attest-out <f>]
-	enclave-iroh dial  -server <ticket> [-tag <id>] [-ephemeral] [msg...]
+	enclave-iroh serve [-tag <id>] [-ephemeral] [-bind <addr>] [-attest-out <f>] [-attest-peer [-attest-mode <m>] [policy flags]]
+	enclave-iroh dial  -server <ticket> [-tag <id>] [-ephemeral] [-attest-peer [-attest-mode <m>] [policy flags]] [msg...]
 	enclave-iroh verify-attestation <file>
+
+Run "enclave-iroh serve -h" or "enclave-iroh dial -h" for the full flag set,
+including -attest-peer and its policy flags (-require-peer-maximal, -pin-cdhash,
+-pin-team, -pin-attest-key, -allow-unattested).
 `)
 	os.Exit(2)
 }
@@ -229,7 +234,7 @@ func runServe(args []string) error {
 	}
 	defer shutdown(ep)
 
-	hsCfg, err := newHandshakeConfig(pc, ep.ID(), signer, hr, *ephemeral)
+	hsCfg, err := newHandshakeConfig(pc, ep.ID(), signer, hr, *ephemeral, report)
 	if err != nil {
 		return err
 	}
@@ -306,7 +311,7 @@ func runDial(args []string) error {
 	}
 	defer shutdown(ep)
 
-	hsCfg, err := newHandshakeConfig(pc, ep.ID(), signer, hr, *ephemeral)
+	hsCfg, err := newHandshakeConfig(pc, ep.ID(), signer, hr, *ephemeral, report)
 	if err != nil {
 		return err
 	}
@@ -421,14 +426,22 @@ func runSigner(hcfg *hardenedConfig, pc *peerConfig, tag string, ephemeral bool)
 }
 
 // newHandshakeConfig builds the T6 handshake config for a run, or nil when
-// -attest-peer is off. signer may be nil for a verify-only handshake.
-func newHandshakeConfig(pc *peerConfig, selfID key.EndpointID, signer enclaveiroh.Signer, hr hardeningReport, ephemeral bool) (*enclaveiroh.HandshakeConfig, error) {
+// -attest-peer is off. signer may be nil for a verify-only handshake. It warns
+// to report when peer-policy flags are set in a mode that never evaluates the
+// peer, so a user does not believe they enforced a policy that is inert.
+func newHandshakeConfig(pc *peerConfig, selfID key.EndpointID, signer enclaveiroh.Signer, hr hardeningReport, ephemeral bool, report io.Writer) (*enclaveiroh.HandshakeConfig, error) {
 	if !pc.Enable {
 		return nil, nil
 	}
 	mode, err := pc.mode()
 	if err != nil {
 		return nil, err
+	}
+	if mode == enclaveiroh.ModeProve {
+		if inert := pc.inertPolicyFlags(); len(inert) > 0 {
+			fmt.Fprintf(report, "attest: warning: -attest-mode prove does not evaluate the peer; %s ignored\n",
+				strings.Join(inert, ", "))
+		}
 	}
 	var id enclaveiroh.CodeIdentity
 	if mode != enclaveiroh.ModeVerify {
@@ -446,6 +459,28 @@ func newHandshakeConfig(pc *peerConfig, selfID key.EndpointID, signer enclaveiro
 		EphemeralKey: ephemeral,
 		Policy:       pc.policy(),
 	}, nil
+}
+
+// inertPolicyFlags returns the names of the peer-policy flags that were set but
+// have no effect because the handshake mode never verifies the peer's Claim.
+func (pc *peerConfig) inertPolicyFlags() []string {
+	var inert []string
+	if pc.RequireMaximal {
+		inert = append(inert, "-require-peer-maximal")
+	}
+	if pc.AllowUnattested {
+		inert = append(inert, "-allow-unattested")
+	}
+	if pc.PinCDHash != "" {
+		inert = append(inert, "-pin-cdhash")
+	}
+	if pc.PinTeam != "" {
+		inert = append(inert, "-pin-team")
+	}
+	if pc.PinAttestKey != "" {
+		inert = append(inert, "-pin-attest-key")
+	}
+	return inert
 }
 
 // logPeerAttestation reports the outcome of a peer handshake.
