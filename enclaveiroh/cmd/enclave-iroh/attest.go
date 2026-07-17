@@ -85,7 +85,17 @@ type attestation struct {
 	Hardening  hardeningReport `json:"hardening"`
 	KeyTag     string          `json:"key_tag"`
 	PublicKey  string          `json:"public_key"`
-	Signature  string          `json:"signature,omitempty"`
+	// PeerAttested reports whether the single peer of a 1:1 channel proved a
+	// code identity over the T6 attestation handshake; PeerClaim is that
+	// verified claim when it did. Both apply to the dial role, which has exactly
+	// one peer per session — a nil PeerAttested (omitted) means peer attestation
+	// is not a property of this record, as for a serve session that attests many
+	// distinct peers per-connection (each logged and gated live, not folded
+	// here). Both fields are part of the signed payload, so a dial record shows
+	// what the endpoint checked about its peer, not just about itself.
+	PeerAttested *bool              `json:"peer_attested,omitempty"`
+	PeerClaim    *enclaveiroh.Claim `json:"peer_claim,omitempty"`
+	Signature    string             `json:"signature,omitempty"`
 }
 
 // payload returns the canonical bytes covered by Signature.
