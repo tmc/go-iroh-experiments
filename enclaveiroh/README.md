@@ -33,12 +33,15 @@ ep, err := iroh.Bind(ctx, iroh.WithSecretKey(sk), iroh.WithALPNs("example/1"))
 ```
 
 `Signer` exposes the same Enclave P-256 primitive for signing an attestation.
+`Handshake` runs the channel-bound attestation handshake of
+[ATTEST.md](ATTEST.md) on a connection; `Claim`, `Policy`, and the `Verify*`
+functions use only the standard library, so claims verify on any platform.
 
 ## Command
 
 ```
-enclave-iroh serve [-tag <id>] [-ephemeral] [-bind <addr>] [-attest-out <f>]
-enclave-iroh dial  -server <ticket> [-tag <id>] [-ephemeral] [msg...]
+enclave-iroh serve [-tag <id>] [-ephemeral] [-bind <addr>] [-attest-out <f>] [-attest-peer [policy flags]]
+enclave-iroh dial  -server <ticket> [-tag <id>] [-ephemeral] [-attest-peer [policy flags]] [msg...]
 enclave-iroh verify-attestation <file>
 ```
 
@@ -62,6 +65,40 @@ hello enclave -> HELLO ENCLAVE
 $ enclave-iroh verify-attestation dial-att.json
 dial-att.json: signature verifies (role "dial", endpoint 8cc7b8ce…, key 04bb9a0a…)
 ```
+
+## Attested connections
+
+With `-attest-peer`, every connection runs the channel-bound attestation
+handshake of [ATTEST.md](ATTEST.md) on its first stream, before any echo data
+flows: each side signs a claim binding its code identity (cdhash, Team ID,
+code-signing flags, read from the kernel) to exactly this connection — both
+endpoint IDs, both session nonces, and the ALPN — under a Secure Enclave key.
+Application streams are gated on the handshake, and a peer that fails the
+verifier's policy is dropped:
+
+```
+$ enclave-iroh serve -ephemeral -attest-peer -allow-unattested &
+attest: requiring T6 handshake (mode mutual) from every peer
+
+$ enclave-iroh dial -ephemeral -attest-peer -attest-out dial-att.json \
+    -server endpointa... "hello enclave"
+attest: 4092f3fa… VERIFIED — cdhash da874184d2146f78… team "" maximal=false
+hello enclave -> HELLO ENCLAVE
+```
+
+The policy flags choose how much to require of the peer: `-require-peer-maximal`
+rejects a peer without a full Hardened Runtime signature; `-pin-cdhash`,
+`-pin-team`, and `-pin-attest-key` pin the exact code, team, or key. An ad-hoc
+`go build` binary (as above) reports `team ""` and `maximal=false`, and a
+rebuild changes the cdhash — that is the cdhash doing its job. `-attest-mode
+prove` attests without evaluating the peer (and warns if policy flags are set,
+since they would be inert); `verify` evaluates without attesting, for a peer
+with no Enclave.
+
+The dial session record folds in the verified peer claim (`peer_attested`,
+`peer_claim`), so `verify-attestation` shows offline what was checked live.
+What this does **not** prove: every claim is still self-reported by the peer's
+process — see T7 in [THREAT-MODEL.md](THREAT-MODEL.md).
 
 ## Persistent vs ephemeral identity
 
@@ -101,5 +138,6 @@ of trust that macOS does not provide.
 ## Requirements
 
 Key custody and hardening require macOS on Apple Silicon or a T2 Mac. On any
-other platform the library returns `ErrUnsupported`; `verify-attestation` works
+other platform the library returns `ErrUnsupported`; `verify-attestation` and
+claim verification (`VerifyClaimSignature`, `VerifyClaim`, `Policy.Check`) work
 everywhere.
