@@ -27,6 +27,7 @@ go-iroh enables.
 | `directpath` | direct-only QUIC path probe for cross-host and dual-stack go-iroh validation |
 | `grpciroh` | run unmodified gRPC services over an iroh QUIC connection (ALPN `grpc/iroh/1`) |
 | `wasmrelay` | browser (js/wasm) relay-only demos, including a cross-tab gossip chat |
+| `x402iroh` | x402-paid HTTP over iroh: endpoint keys authorize payments on an `iroh:ed25519` network (ALPN `x402/iroh/1`) |
 | `xetstore` | serve HuggingFace/Xet files as iroh blobs via BAO outboards over HTTP range requests |
 
 Each module has its own `README.md` and package docs.
@@ -49,8 +50,9 @@ local `replace` directive. Create it locally with:
 
 ```sh
 go work init ./contentdiscovery ./dagsync ./dtrain ./grpciroh ./h3iroh \
-    ./directpath ./pkarrnaming ./s3baostore ./wasmrelay ./xetstore
+    ./directpath ./pkarrnaming ./s3baostore ./wasmrelay ./x402iroh ./xetstore
 go work edit -replace github.com/tmc/go-iroh=../go-iroh   # optional, for local go-iroh work
+go work edit -replace github.com/tmc/x402=../x402         # optional, for local x402 work
 ```
 
 Run a module's tests from inside its directory:
