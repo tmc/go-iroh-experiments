@@ -270,7 +270,7 @@ to a peer, and against which adversary.
 | L1 | "The endpoint key can't be stolen at rest; the identity is stable." | enclaveiroh key custody (T1, T3) | A0–A3, A5 (at rest) |
 | L2 | "The peer *self-reports* the published cdhash under a Hardened Runtime, bound to this live session." | proposed cdhash + channel-bound handshake (T6, T9) | A1 (replay), and A2 *only if A2 is honest* |
 | L3 | "Only a binary signed by this Team, with this entitlement, reached the key." | keychain-access-group gate (T8) | A2/A3 lacking the team signature |
-| L4 | "The peer *provably* runs the exact binary, even if adversarial." | **external root of trust — not macOS-native** | A2 |
+| L4 | "The peer *provably* runs the exact binary, even if adversarial." | **external root of trust — not macOS-native until macOS 27** | A2 |
 
 L0–L3 are achievable with the mechanisms in `enclaveiroh` (L2/L3 need the
 proposed handshake and the bundled path). **L4 is the one people usually mean by
@@ -280,25 +280,46 @@ cannot reach against a malicious peer (A2 / T5 / T7).**
 ## What remains open — reaching L4
 
 L4 requires an attestation a peer *cannot forge about itself*, which means a
-third party the peer does not control must vouch for the code. Options, none of
-them native macOS:
+third party the peer does not control must vouch for the code. The macOS-native
+options are time-bound, and the empirically-verified state today (macOS 26
+Tahoe, Apple Silicon) is narrower than the docs suggest:
 
 - **Apple App Attest** (`DCAppAttestService`) — Apple's servers vouch that a
   hardware-backed key belongs to a genuine, unmodified instance of *your* App ID
-  on genuine Apple hardware. This is real remote code attestation, but it is
-  iOS/iPadOS/tvOS-family, not native macOS. Viable only if a peer can be an
-  iOS-family app.
+  on genuine Apple hardware. This *is* real remote code attestation and is the
+  right primitive, but as of macOS 26 `DCAppAttestService.isSupported` returns
+  **false on every Mac** — native, Mac Catalyst, and iOS-app-on-Apple-Silicon
+  alike — despite the docs listing macOS 11+. It works today only on
+  iOS/iPadOS/tvOS. Native macOS support is **announced for macOS 27** (WWDC 26),
+  at which point L4 via App Attest becomes reachable for a native macOS peer.
+  Until then it is not an option for this program.
+- **Managed Device Attestation** — CA-rooted at the Apple Enterprise Attestation
+  Root, and a pure-Go verifier already exists (X.509 chain + freshness code +
+  device-property OIDs; see `github.com/tmc/apple/examples/security/mda-verify-demo`).
+  But it is MDM + ACME-gated, attests the *device* rather than the *code*, and
+  the attested key lands in a keychain a third-party app cannot read — so it can
+  raise confidence that the peer runs on a specific managed Apple device, not
+  that it runs a specific binary. L4-adjacent for device identity, not code.
 - **Confidential-computing TEE** (Intel SGX, AMD SEV-SNP, Intel TDX, AWS Nitro
   Enclaves) — the hardware measures the loaded code and signs the measurement
   with a vendor-CA-rooted key. Appropriate for *server* peers on the network.
 - **TPM 2.0 remote attestation (DICE)** — an Endorsement Key rooted in a
   manufacturer CA attests measured boot + code on non-Apple hardware.
 
-Each replaces "trust the peer's own signature" (T7) with "trust a vendor CA and
-a measured-launch chain." Layering any of them under the iroh handshake — the
-attestation signs the endpoint pubkey + nonce, exactly as in T6, but with a
+Each of these replaces "trust the peer's own signature" (T7) with "trust a
+vendor CA and a measured-launch chain." Layering one under the iroh handshake —
+the attestation signs the endpoint pubkey + nonce, exactly as in T6, but with a
 CA-rooted quote instead of a self-held Enclave key — closes T5 against A2 and
 reaches L4.
+
+Not L4, but worth distinguishing: **DeviceCheck classic** (`DCDevice`) works
+today with **zero client friction** — `isSupported` is true and `generateToken`
+returns a real device token even from an unsigned `go run`, validated
+server-side against Apple with an ES256 JWT (Team ID + DeviceCheck key). It is a
+genuine-Apple-device *anti-abuse* signal (two per-device bits plus a fraud
+timestamp), **not** hardware or code attestation. It can gate "is this plausibly
+a real Apple device" cheaply, but it does not bind code identity and does not
+move a peer up the ladder.
 
 ## Operational notes
 
@@ -322,10 +343,14 @@ reaches L4.
 
 `enclaveiroh` gives strong guarantees for AS1–AS3 (key custody, identity,
 channel security) against network and local-unprivileged adversaries, and a real
-if partial code gate (AS4, L3) via the Team-ID entitlement. It does **not**, and
-on native macOS cannot, prove AS4 to L4 against a malicious peer, because the
-attestation is self-signed by a key the peer controls (T7). "Confident messages
-between the exact published Go code" is therefore achievable as *outbound
-self-attestation* and as *"only a team-signed binary participates,"* but sound
-*peer verification against an adversary* needs an external attestation root
-(App Attest, a TEE, or a TPM) that macOS does not provide for native binaries.
+if partial code gate (AS4, L3) via the Team-ID entitlement. It does **not** today
+prove AS4 to L4 against a malicious peer, because the attestation is self-signed
+by a key the peer controls (T7). "Confident messages between the exact published
+Go code" is therefore achievable as *outbound self-attestation* and as *"only a
+team-signed binary participates,"* but sound *peer verification against an
+adversary* needs an external attestation root. On native macOS that root does not
+exist yet: App Attest reports `isSupported = false` on every Mac as of macOS 26
+and is announced to arrive in macOS 27, at which point L4 becomes natively
+reachable. Until then the L4 options are a non-macOS TEE/TPM peer, or an
+iOS-family peer using App Attest today. DeviceCheck can add a cheap
+genuine-Apple-device signal now, but it is anti-abuse, not attestation.
