@@ -175,23 +175,36 @@ mitigation in place today (▣) or proposed (▢) or none (□), and the residua
 - **Mitigation □ / ▢:** identity (AS3) says nothing about code. A peer can hold a
   perfectly valid endpoint key (even an Enclave-custodied one) inside a patched,
   reimplemented, or instrumented binary and speak the protocol correctly. The
-  proposed attestation (T6) lets the peer *self-report* its cdhash, but a peer
-  that controls its machine can make its process report or sign whatever it
-  wants (see T7's self-attestation gap).
+  landed attestation handshake (T6) lets the peer *self-report* its cdhash over
+  the exact channel, but a peer that controls its machine can make its process
+  report or sign whatever it wants (see T7's self-attestation gap).
 - **Residual:** **unmitigable within these primitives.** Closing T5 against A2
   requires an external root of trust (see "What remains open").
 
 ### T6 — Forged or replayed attestation
 - **Adversary:** A1 (replay a captured attestation), A2 (mint a plausible one)
 - **Impact:** AS5
-- **Mitigation ▢ (proposed):** a per-connection, channel-bound handshake on a
-  dedicated ALPN: the Enclave attestation key signs `H(nonce ‖ endpoint_pubkey ‖
-  cdhash ‖ team_id ‖ code_sign_flags)`, where `nonce` is fresh per connection and
-  `endpoint_pubkey` is the live transport key. This binds the attestation to
-  *this* session (defeats replay, A1) and to *this* transport identity (defeats
-  lifting an attestation onto a different channel).
-- **Residual:** replay and cross-channel transplant are closed. A2 forging a
-  *truthful-looking but false* attestation is **not** — that is T7.
+- **Mitigation ▣ (in place):** a per-connection, channel-bound attestation
+  handshake runs on the **first bidirectional stream of the application
+  connection** — not a dedicated ALPN — before any application stream proceeds
+  (see [ATTEST.md](ATTEST.md), `handshake.go`, `claim.go`). Each side's Enclave
+  attestation key signs a `Claim` binding the domain string
+  `enclaveiroh-attest/1`, its **role** (`dial`/`serve` from `Conn.Side`), **both**
+  endpoint IDs as it sees them, the connection's ALPN, and **both** Hello nonces,
+  alongside `cdhash`/`team_id`/`cs_flags`. Signing covers a canonical
+  length-prefixed binary serialization (not a JSON re-marshal), so field
+  boundaries are unambiguous and validity does not couple to marshal determinism.
+  The verifier checks the signature against the embedded attestation key, then the
+  role complement, ALPN, both endpoint IDs, and both nonces before any policy
+  gate. Demonstrated end-to-end over real iroh QUIC, both single-session and
+  cross-process, with mutual verification (`handshake_e2e_test.go`,
+  `TestHandshakeEnclaveOverIroh`).
+- **Residual:** replay (`nonce_peer`), cross-channel transplant (in-connection
+  placement + both-endpoint-ID binding), and reflection (`role` +
+  `remote_endpoint`) are all closed — strictly more than the original
+  `H(nonce ‖ pubkey ‖ …)` sketch, which bound neither the role nor the second
+  endpoint ID. A2 forging a *truthful-looking but false* attestation is **not**
+  closed — that is T7, the irreducible self-attestation gap.
 
 ### T7 — Self-attestation trust gap
 - **Adversary:** A2
@@ -227,10 +240,14 @@ mitigation in place today (▣) or proposed (▢) or none (□), and the residua
 ### T9 — Downgrade to the unentitled / ad-hoc path
 - **Adversary:** A2, A3
 - **Impact:** bypasses T8 by using `-ephemeral`, which needs no entitlement
-- **Mitigation ▢ (proposed):** the verifier rejects attestations whose embedded
-  code-signing state is not `Maximal()` (Hardened Runtime, kill, enforcement,
-  library validation, not debuggable, not `get_task_allow`) and that are not
-  `bundled`. `enclave-iroh serve -require-maximal` refuses to start otherwise.
+- **Mitigation ▣ (in place):** enforcement moved into verifier policy at accept
+  time. `Policy.RequireMaximal` rejects a peer Claim whose `cs_flags` are not
+  `Maximal()` (Hardened Runtime, kill, enforcement, library validation, not
+  debuggable, not `get_task_allow`); `RequireBundled` and `ForbidEphemeralKey`
+  gate the other downgrade axes. The command exposes these as
+  `serve`/`dial -require-peer-maximal`, and `-require-maximal` is the orthogonal
+  *self* gate that refuses to start when this endpoint's own posture is weak
+  (self-hygiene vs peer-trust are kept separate — see ATTEST.md §"Self vs peer").
 - **Residual:** enforcement lives at the verifier's policy. A verifier that
   accepts non-maximal attestations gets no T8 protection. Does not help against
   T7 (a maximal-looking attestation can still be a self-signed lie from A2).
@@ -247,10 +264,14 @@ mitigation in place today (▣) or proposed (▢) or none (□), and the residua
 ### T11 — Stale attestation / version rollback
 - **Adversary:** A1, A2
 - **Impact:** AS5 — presenting an old, valid attestation for a superseded build
-- **Mitigation ▢ (proposed):** the per-connection nonce (T6) plus a monotonic
-  build/version field in the signed payload; the verifier pins the *current*
-  acceptable cdhash set and rejects known-superseded ones.
-- **Residual:** verifier must keep its pin set current.
+- **Mitigation ▣ / ▢ (partial):** the pin lever is in place — `Policy`'s
+  `AllowedCDHashes` (and `-pin-cdhash`) let a verifier accept only its current
+  cdhash set and reject known-superseded ones, and the per-connection nonces
+  (T6, in place) stop a captured attestation being replayed. Still proposed: a
+  monotonic build/version field in the signed Claim so rollback is rejected by
+  ordering rather than only by an out-of-band pin set.
+- **Residual:** verifier must keep its pin set current; without the version
+  field, a superseded-but-still-pinned cdhash is not caught by the protocol.
 
 ### T12 — Enclave or hardware compromise
 - **Adversary:** A4 (with a kernel/firmware break), A5
@@ -268,14 +289,15 @@ to a peer, and against which adversary.
 |-------|-------|-------------|---------------|
 | L0 | "Both ends are the same key; traffic is authentic and private." | iroh QUIC/TLS | A0, A1 |
 | L1 | "The endpoint key can't be stolen at rest; the identity is stable." | enclaveiroh key custody (T1, T3) | A0–A3, A5 (at rest) |
-| L2 | "The peer *self-reports* the published cdhash under a Hardened Runtime, bound to this live session." | proposed cdhash + channel-bound handshake (T6, T9) | A1 (replay), and A2 *only if A2 is honest* |
+| L2 | "The peer *self-reports* the published cdhash under a Hardened Runtime, bound to this live session." | in-connection channel-bound attestation handshake + policy (T6, T9) | A1 (replay), and A2 *only if A2 is honest* |
 | L3 | "Only a binary signed by this Team, with this entitlement, reached the key." | keychain-access-group gate (T8) | A2/A3 lacking the team signature |
 | L4 | "The peer *provably* runs the exact binary, even if adversarial." | **external root of trust — not macOS-native until macOS 27** | A2 |
 
-L0–L3 are achievable with the mechanisms in `enclaveiroh` (L2/L3 need the
-proposed handshake and the bundled path). **L4 is the one people usually mean by
-"confident it's the published code," and it is exactly the rung `enclaveiroh`
-cannot reach against a malicious peer (A2 / T5 / T7).**
+L0–L3 are achievable with the mechanisms in `enclaveiroh`: L2 is the landed
+channel-bound handshake (T6), and L3 additionally needs the bundled,
+entitlement-gated path (T8). **L4 is the one people usually mean by "confident
+it's the published code," and it is exactly the rung `enclaveiroh` cannot reach
+against a malicious peer (A2 / T5 / T7).**
 
 ## What remains open — reaching L4
 
