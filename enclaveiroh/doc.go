@@ -26,6 +26,33 @@
 // [Signer] exposes the same Enclave-resident P-256 primitive as a signer, for
 // attesting to a run.
 //
+// The package also implements the channel-bound attestation handshake of
+// ATTEST.md: each side of an iroh connection proves, under an Enclave-resident
+// key, what code it runs — bound to exactly this connection and session.
+// [Handshake] runs on the first bidirectional stream of a connection, before
+// any application stream. An attesting side signs a [Claim] carrying its
+// [CodeIdentity] (cdhash, Team ID, and code-signing flags, read from the
+// kernel) together with its role, both endpoint IDs, both session nonces, and
+// the connection's ALPN, so a claim cannot be replayed, transplanted onto
+// another channel, or reflected. [Policy] is the verifier's acceptance
+// criteria over the peer's claim, from any attested peer (the zero value) to
+// pinned teams, cdhashes, and keys:
+//
+//	att, err := enclaveiroh.Handshake(ctx, conn, enclaveiroh.HandshakeConfig{
+//		SelfID:   ep.ID(),
+//		Mode:     enclaveiroh.ModeMutual,
+//		Signer:   signer,
+//		Identity: identity,
+//		Policy:   enclaveiroh.Policy{RequireMaximal: true},
+//	})
+//
+// Producing a claim requires the Enclave and the kernel's code-signing state,
+// but verifying one does not: [VerifyClaimSignature], [VerifyClaim], and
+// [Policy.Check] use only the standard library, so a non-darwin peer can
+// verify claims it cannot produce ([ModeVerify]). Every claim remains
+// self-reported by the peer's process — the handshake narrows who can lie, it
+// does not remove lying; see THREAT-MODEL.md.
+//
 // Key custody requires macOS on Apple Silicon or a T2 Mac. On any other
 // platform every operation returns [ErrUnsupported]. Persisting a key across
 // restarts also requires a keychain-access-groups entitlement backed by a real
