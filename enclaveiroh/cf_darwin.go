@@ -37,8 +37,9 @@ func cfString(s corefoundation.CFStringRef) string {
 	if n == 0 {
 		return ""
 	}
-	// A UTF-8 code point is at most 4 bytes per UTF-16 unit; +1 for the NUL
-	// that CFStringGetCString writes.
+	// A BMP code point is at most 3 UTF-8 bytes per UTF-16 unit (4-byte
+	// sequences come from surrogate pairs, i.e. two units), so n*4+1 — with +1
+	// for the NUL CFStringGetCString writes — is a safe over-allocation.
 	buf := make([]byte, n*4+1)
 	if !corefoundation.CFStringGetCString(s, &buf[0], len(buf), kUTF8) {
 		return ""
@@ -101,6 +102,8 @@ var secConsts = map[string]string{
 	"kSecClassGenericPassword":                     security.KSecClassGenericPassword,
 	"kSecAttrKeyType":                              security.KSecAttrKeyType,
 	"kSecAttrKeyTypeECSECPrimeRandom":              security.KSecAttrKeyTypeECSECPrimeRandom,
+	"kSecAttrKeyClass":                             security.KSecAttrKeyClass,
+	"kSecAttrKeyClassPrivate":                      security.KSecAttrKeyClassPrivate,
 	"kSecAttrKeySizeInBits":                        security.KSecAttrKeySizeInBits,
 	"kSecAttrTokenID":                              security.KSecAttrTokenID,
 	"kSecAttrTokenIDSecureEnclave":                 security.KSecAttrTokenIDSecureEnclave,

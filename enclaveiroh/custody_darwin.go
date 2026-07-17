@@ -26,7 +26,17 @@ func (ks *KeyStore) obtainSeed() ([]byte, error) {
 	defer wrap.Release()
 
 	if ks.Ephemeral {
-		return ks.freshSeed(wrap)
+		// A fresh identity that is never persisted; the seal/open round trip in
+		// sealVerified only proves the machine's Enclave can do ECIES.
+		seed, err := freshSeed()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := sealVerified(wrap, seed); err != nil {
+			wipe(seed)
+			return nil, err
+		}
+		return seed, nil
 	}
 
 	ciphertext, found, err := loadSecret(ks.service(), ks.account())
@@ -45,14 +55,16 @@ func (ks *KeyStore) obtainSeed() ([]byte, error) {
 		return seed, nil
 	}
 
-	seed, err := ks.freshSeed(wrap)
+	seed, err := freshSeed()
 	if err != nil {
 		return nil, err
 	}
-	ciphertext, err = wrap.Seal(seed)
+	// Verify the round trip before persisting: a Seal-ok but Open-broken Enclave
+	// would otherwise commit an identity that is unrecoverable on the next run.
+	ciphertext, err = sealVerified(wrap, seed)
 	if err != nil {
 		wipe(seed)
-		return nil, fmt.Errorf("wrap seed: %w", err)
+		return nil, err
 	}
 	if err := storeSecret(ks.service(), ks.account(), ciphertext); err != nil {
 		wipe(seed)
@@ -82,33 +94,33 @@ func (ks *KeyStore) wrappingKey() (*enclaveKey, error) {
 	return key, err
 }
 
-// freshSeed generates a new random ed25519 seed and, in ephemeral mode, proves
-// the machine's Enclave can round-trip it (seal to the public key, open with
-// the private key) before returning it. The round trip also fails fast on a Mac
-// whose Enclave cannot perform ECIES.
-func (ks *KeyStore) freshSeed(wrap *enclaveKey) ([]byte, error) {
+// freshSeed generates a new random ed25519 seed.
+func freshSeed() ([]byte, error) {
 	seed := make([]byte, seedSize)
 	if _, err := rand.Read(seed); err != nil {
 		return nil, err
 	}
-	if ks.Ephemeral {
-		ct, err := wrap.Seal(seed)
-		if err != nil {
-			wipe(seed)
-			return nil, fmt.Errorf("wrap seed: %w", err)
-		}
-		got, err := wrap.Open(ct)
-		if err != nil {
-			wipe(seed)
-			return nil, fmt.Errorf("unwrap seed: %w", err)
-		}
-		defer wipe(got)
-		if len(got) != seedSize || !equal(got, seed) {
-			wipe(seed)
-			return nil, fmt.Errorf("enclave seal/open round trip did not preserve the seed")
-		}
-	}
 	return seed, nil
+}
+
+// sealVerified ECIES-wraps seed to the Enclave key and confirms the Enclave can
+// recover it before the ciphertext is trusted. This catches a Seal-ok but
+// Open-broken Enclave (or a Mac that cannot perform ECIES) before the identity
+// is committed, on both the ephemeral and the persistent path.
+func sealVerified(wrap *enclaveKey, seed []byte) ([]byte, error) {
+	ciphertext, err := wrap.Seal(seed)
+	if err != nil {
+		return nil, fmt.Errorf("wrap seed: %w", err)
+	}
+	got, err := wrap.Open(ciphertext)
+	if err != nil {
+		return nil, fmt.Errorf("verify wrap: unwrap seed: %w", err)
+	}
+	defer wipe(got)
+	if len(got) != seedSize || !equal(got, seed) {
+		return nil, fmt.Errorf("enclave seal/open round trip did not preserve the seed")
+	}
+	return ciphertext, nil
 }
 
 // newSigner builds a Secure Enclave P-256 attestation signer.

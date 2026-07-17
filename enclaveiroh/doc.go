@@ -7,9 +7,14 @@
 // it generates a P-256 key inside the Enclave, ECIES-encrypts the 32-byte
 // ed25519 seed to that key's public half, and persists only the ciphertext in
 // the Data Protection Keychain. At startup the ciphertext is decrypted by the
-// Enclave — the seed is reconstructed for exactly as long as it takes to bind
-// the endpoint, then zeroed. The plaintext seed is never written to disk and
-// the P-256 private key never leaves the Enclave.
+// Enclave and the seed is bound into the endpoint. The KeyStore's own copy of
+// the seed is then zeroed, but the seed is not gone from the process: an
+// ed25519 signer must keep the private key to sign every TLS handshake, so it
+// lives in [iroh.Endpoint] for the endpoint's whole lifetime. What custody buys
+// is protection at rest — the plaintext seed is never written to disk, only its
+// ciphertext, and the P-256 private key never leaves the Enclave. Protecting the
+// seed while it is live in memory is the job of the process hardening in the
+// enclave-iroh command, which runs for the whole session, not just at bind.
 //
 //	ks := &enclaveiroh.KeyStore{Tag: "dev.example.node"}
 //	sk, err := ks.SecretKey()
