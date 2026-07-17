@@ -11,8 +11,9 @@ import (
 var ErrUnsupported = errors.New("enclaveiroh: Secure Enclave key custody requires macOS")
 
 // seedSize is the length of an ed25519 seed, and the plaintext this package
-// wraps in the Enclave.
-const seedSize = 32
+// wraps in the Enclave. It tracks the go-iroh key format the wrapped bytes must
+// satisfy.
+const seedSize = key.SeedSize
 
 // KeyStore custodies an iroh endpoint's ed25519 seed using a Secure Enclave
 // P-256 wrapping key. The zero value is not usable; set at least Tag.
@@ -25,6 +26,10 @@ type KeyStore struct {
 	// ciphertext. Empty values fall back to Tag-derived defaults.
 	Service string
 	Account string
+
+	// A persistent store is not safe to initialize concurrently: two processes
+	// racing the first use can each create a wrapping key under Tag and end up
+	// with a split-brain identity. Provision it once before fanning out.
 
 	// Ephemeral requests a wrapping key that lives only for this process and
 	// skips keychain persistence, yielding a fresh endpoint identity on every

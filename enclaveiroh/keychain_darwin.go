@@ -20,6 +20,7 @@ const (
 	errSecDuplicateItem      = -25299
 	errSecMissingEntitlement = -34018
 	errSecParam              = -50
+	errSecVerifyFailed       = -67808
 )
 
 // errMissingEntitlement is returned when the Data Protection Keychain rejects an

@@ -142,9 +142,15 @@ func emitAttestation(att *attestation, path string, report io.Writer) error {
 	return nil
 }
 
-// verifyAttestationFile checks the signature of an attestation written by
-// -attest-out. It uses only the record's embedded public key and the standard
-// library, so it runs on any platform, away from the signing machine.
+// verifyAttestationFile checks that an attestation's signature is internally
+// consistent with the public key embedded in the same record. It uses only the
+// standard library, so it runs on any platform.
+//
+// This proves the record was signed by whoever holds public_key and has not
+// been altered since — nothing more. It does NOT prove the signer is a genuine
+// Secure Enclave or the published binary: anyone with any P-256 key can mint a
+// record with arbitrary claims that passes here. Trust requires pinning
+// public_key out of band (see THREAT-MODEL.md T7).
 func verifyAttestationFile(path string, out io.Writer) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -177,7 +183,7 @@ func verifyAttestationFile(path string, out io.Writer) error {
 	if !ecdsa.VerifyASN1(pub, digest[:], sig) {
 		return fmt.Errorf("signature does not verify against the embedded public key")
 	}
-	fmt.Fprintf(out, "%s: signature verifies (role %q, endpoint %s, key %s…)\n",
+	fmt.Fprintf(out, "%s: internally consistent (role %q, endpoint %s); trust requires pinning key %s…\n",
 		path, att.Role, att.EndpointID, att.PublicKey[:16])
 	return nil
 }

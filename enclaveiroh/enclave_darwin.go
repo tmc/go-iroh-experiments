@@ -92,6 +92,12 @@ func findEnclaveKey(tag []byte) (key *enclaveKey, found bool, err error) {
 	query.setData(security.KSecAttrApplicationTag, tag)
 	query.setBool(security.KSecReturnRef, true)
 	query.setConst(security.KSecMatchLimit, security.KSecMatchLimitOne)
+	// Constrain the match to an Enclave-resident private key. Without this a
+	// software key planted under the same tag would be adopted as the wrapping
+	// key and the seed sealed to a key whose private half is not in the Enclave.
+	query.setConst(security.KSecAttrKeyClass, security.KSecAttrKeyClassPrivate)
+	query.setConst(security.KSecAttrKeyType, security.KSecAttrKeyTypeECSECPrimeRandom)
+	query.setConst(security.KSecAttrTokenID, security.KSecAttrTokenIDSecureEnclave)
 
 	var result corefoundation.CFTypeRef
 	status := security.SecItemCopyMatching(query.ref(), &result)
@@ -225,9 +231,15 @@ func (k *enclaveKey) Verify(message, signature []byte) (bool, error) {
 		&cfError,
 	)
 	if !ok {
-		// A rejected signature is reported via cfError (errSecVerifyFailed).
-		// Consume and discard it: a forgery is a normal result, not a failure.
+		// Distinguish a rejected signature — a normal result, reported as
+		// errSecVerifyFailed — from a broken call (bad key ref, unsupported
+		// algorithm, errSecParam), which must surface as an error per the
+		// interface contract.
 		if cfError != 0 {
+			code := corefoundation.CFErrorGetCode(cfError)
+			if code != errSecVerifyFailed {
+				return false, cfErr(cfError, "SecKeyVerifySignature")
+			}
 			corefoundation.CFRelease(corefoundation.CFTypeRef(cfError))
 		}
 		return false, nil

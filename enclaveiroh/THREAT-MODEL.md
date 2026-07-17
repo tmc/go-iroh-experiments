@@ -30,7 +30,7 @@ stated up front so the rest can be read against it:
             ▼
    ┌─────────────────────── machine (peer) ───────────────────────┐
    │  ┌── process (enclave-iroh) ────────────────────────────┐    │
-   │  │  ed25519 seed (in RAM only during bind, then zeroed) │    │
+   │  │  ed25519 private key: in RAM for the whole session   │    │
    │  │  iroh endpoint  ◄── WithSecretKey(seed)              │    │
    │  └───────────▲───────────────────────────▲──────────────┘    │
    │              │ SecKeyCreateDecryptedData  │ csops(status)     │
@@ -56,8 +56,12 @@ Components:
 - **Published build** — the Go binary under review. With `-trimpath`, a pinned
   toolchain, and Developer-ID + notarization, it has a deterministic code
   identity (the Mach-O *cdhash*) and a signing *Team ID*.
-- **Process** — the running `enclave-iroh`. Holds the ed25519 seed only in the
-  window between `SecKeyCreateDecryptedData` and `iroh.Bind`, then zeroes it.
+- **Process** — the running `enclave-iroh`. `SecKeyCreateDecryptedData` recovers
+  the seed, `iroh.Bind` copies it into the endpoint, and the KeyStore's own copy
+  is zeroed — but iroh must retain the ed25519 private key to sign every TLS
+  handshake, so the key material stays in process memory (in `iroh.Endpoint`, and
+  in every `key.SecretKey` value copied along the way) for the endpoint's whole
+  lifetime. Custody is an at-rest protection, not an in-memory one.
 - **Secure Enclave** — holds two P-256 keys whose private halves never leave
   the hardware: the *wrapping key* (unwraps the endpoint seed via ECIES) and the
   *attestation key* (signs session records).
@@ -132,15 +136,20 @@ mitigation in place today (▣) or proposed (▢) or none (□), and the residua
 
 ### T2 — Key extraction from live process memory
 - **Adversary:** A4 (root/kernel reads RAM), A5 (cold-boot)
-- **Impact:** AS1 during the bind window
-- **Mitigation ▣:** the plaintext seed exists only between `Open` and
-  `SecretKeyFromSlice`, then `wipe()`; `PT_DENY_ATTACH` and the `P_TRACED`
-  watchdog raise the cost of attaching to read it; Hardened Runtime + library
-  validation block code injection under a proper signature.
+- **Impact:** AS1 for the whole session
+- **Mitigation ▣:** `PT_DENY_ATTACH` and the `P_TRACED` watchdog run for the
+  entire run, and Hardened Runtime + library validation block code injection
+  under a proper signature. The exposure is **not** a short bind window: iroh
+  retains the ed25519 private key to sign every handshake, so the key is in
+  memory for the endpoint's lifetime (see the Process component). `wipe()` clears
+  only the KeyStore's transient copy, not iroh's. This is why the watchdog polls
+  continuously rather than only guarding startup.
 - **Residual:** a privileged local attacker (A4) or physical attacker (A5) can
-  still read process memory during the window. These are speed bumps, not a
-  boundary. Shrinking the window (unwrap → bind → wipe with nothing yielding in
-  between) is the only lever; it does not close it.
+  read process memory at any point in the session. These are speed bumps, not a
+  boundary. There is no "shrink the window" lever — the window is the run — so
+  the honest guarantee is: at-rest custody (T1) keeps the key encrypted when the
+  process is not running, and whole-run hardening raises the cost of reading it
+  while it is.
 
 ### T3 — Impersonation of the endpoint elsewhere
 - **Adversary:** A3–A5 after succeeding at T2
@@ -209,6 +218,11 @@ mitigation in place today (▣) or proposed (▢) or none (□), and the residua
   entitlement*" — a real, enforceable gate, but not down to a single cdhash. A
   second binary from the same team could still access the key. It is the
   strongest native-macOS lever toward AS4.
+- **Related:** the wrapping-key lookup (`findEnclaveKey`) constrains the match to
+  `kSecAttrTokenIDSecureEnclave` + private key class, so a *software* key planted
+  under the same application tag is not silently adopted (which would seal the
+  seed to a non-Enclave key). T8 gates *access* to the stored items; this check
+  ensures the key that comes back is actually Enclave-resident.
 
 ### T9 — Downgrade to the unentitled / ad-hoc path
 - **Adversary:** A2, A3
@@ -285,6 +299,14 @@ a measured-launch chain." Layering any of them under the iroh handshake — the
 attestation signs the endpoint pubkey + nonce, exactly as in T6, but with a
 CA-rooted quote instead of a self-held Enclave key — closes T5 against A2 and
 reaches L4.
+
+## Operational notes
+
+- **First-run race:** two processes racing the very first persistent use can each
+  generate a wrapping key under the same tag (a later `kSecMatchLimitOne` lookup
+  then picks one arbitrarily), and `storeSecret`'s delete-then-add can interleave,
+  producing a split-brain identity. Provision the persistent key once before
+  fan-out; the ephemeral path is unaffected (each process is its own identity).
 
 ## Non-goals
 

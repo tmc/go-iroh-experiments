@@ -4,11 +4,16 @@ Custody an iroh endpoint's identity in the Apple Secure Enclave, and run it
 inside a hardened process.
 
 An iroh endpoint is named by its ed25519 secret key; whoever holds that key is
-the endpoint. This package keeps that key out of process memory and off disk:
-the Secure Enclave holds a P-256 key that never leaves the hardware, the 32-byte
-ed25519 seed is ECIES-encrypted to it, and only the ciphertext is persisted in
-the Data Protection Keychain. At startup the seed is decrypted by the Enclave,
-used to bind the endpoint, and zeroed.
+the endpoint. This package keeps that key *off disk*: the Secure Enclave holds a
+P-256 key that never leaves the hardware, the 32-byte ed25519 seed is
+ECIES-encrypted to it, and only the ciphertext is persisted in the Data
+Protection Keychain. At startup the seed is decrypted by the Enclave and bound
+into the endpoint.
+
+Custody protects the identity **at rest**, not in live memory: an ed25519 signer
+must retain the private key to sign every TLS handshake, so once the endpoint is
+bound the seed lives in the process for the whole session. Guarding it there is
+the job of the process hardening (below), which runs for the entire run.
 
 The `enclave-iroh` command wraps that key custody in the same anti-debug harness
 as the [tmc/apple secure-enclave demo](https://github.com/tmc/mlx-go-lm): it
@@ -82,11 +87,16 @@ mode the loopback demo above uses.
 
 The Enclave protects the endpoint key *at rest*: an attacker who reads the disk
 or the keychain database gets only ciphertext they cannot decrypt without the
-Enclave. `PT_DENY_ATTACH` and the trace watchdog raise the cost of attaching a
-debugger to read the seed while it is briefly in memory during bind. Neither is a
-boundary against a sufficiently privileged attacker (a kernel extension, or a
-debugger attached before hardening runs); they are speed bumps that pair with a
-Hardened Runtime signature.
+Enclave. In memory the seed is present for the whole session (iroh must hold the
+ed25519 private key to sign every handshake), so `PT_DENY_ATTACH` and the trace
+watchdog run for the entire run to raise the cost of attaching a debugger to
+read it. Neither is a boundary against a sufficiently privileged attacker (a
+kernel extension, or a debugger attached before hardening runs); they are speed
+bumps that pair with a Hardened Runtime signature.
+
+See [THREAT-MODEL.md](THREAT-MODEL.md) for the full model — assets, adversary
+tiers, and why proving the *peer* runs the published code needs an external root
+of trust that macOS does not provide.
 
 ## Requirements
 
