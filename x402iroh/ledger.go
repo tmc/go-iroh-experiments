@@ -117,7 +117,7 @@ func (l *Ledger) Settle(ctx context.Context, payload *x402.PaymentPayload, reqs 
 // Supported reports the single payment kind the ledger settles.
 func (l *Ledger) Supported(ctx context.Context) (*x402.SupportedResponse, error) {
 	return &x402.SupportedResponse{
-		Kinds:      []x402.SupportedKind{{X402Version: x402.Version, Scheme: Scheme, Network: Network}},
+		Kinds:      []x402.SupportedKind{{Version: x402.Version, Scheme: Scheme, Network: Network}},
 		Extensions: []string{},
 		Signers:    map[string][]string{},
 	}, nil
@@ -141,7 +141,7 @@ func invalid(reason, message string) *x402.VerifyResponse {
 // set, and account balances. The caller holds l.mu.
 func (l *Ledger) check(payload *x402.PaymentPayload, reqs x402.PaymentRequirements) (checkedPayment, *x402.VerifyResponse) {
 	var c checkedPayment
-	if payload.X402Version != x402.Version {
+	if payload.Version != x402.Version {
 		return c, invalid(x402.ReasonInvalidVersion, "")
 	}
 	if reqs.Scheme != Scheme {

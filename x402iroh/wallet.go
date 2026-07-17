@@ -75,9 +75,9 @@ func (w *Wallet) pay(req x402.PaymentRequirements, resource *x402.ResourceInfo) 
 		return nil, fmt.Errorf("x402iroh: encode payload: %w", err)
 	}
 	return &x402.PaymentPayload{
-		X402Version: x402.Version,
-		Resource:    resource,
-		Accepted:    req,
-		Payload:     payload,
+		Version:  x402.Version,
+		Resource: resource,
+		Accepted: req,
+		Payload:  payload,
 	}, nil
 }
