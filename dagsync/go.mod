@@ -6,7 +6,7 @@ require (
 	github.com/ipfs/go-cid v0.6.1
 	github.com/ipld/go-ipld-prime v0.23.0
 	github.com/multiformats/go-multihash v0.2.3
-	github.com/tmc/go-iroh v0.0.0-20260629212311-70a5d5bb10e1
+	github.com/tmc/go-iroh v0.1.0
 )
 
 require (

@@ -3,7 +3,7 @@ module github.com/tmc/go-iroh-experiments/grpciroh
 go 1.26
 
 require (
-	github.com/tmc/go-iroh v0.0.0-20260629212311-70a5d5bb10e1
+	github.com/tmc/go-iroh v0.1.0
 	google.golang.org/grpc v1.66.2
 	google.golang.org/protobuf v1.34.1
 )

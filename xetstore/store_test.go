@@ -21,12 +21,9 @@ func TestImportBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportBytes: %v", err)
 	}
-	entry, ok, err := store.Get(context.Background(), hash)
+	entry, err := store.Open(context.Background(), hash)
 	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if !ok {
-		t.Fatal("Get = false, want true")
+		t.Fatalf("Open: %v", err)
 	}
 	assertEntry(t, entry, data)
 }
@@ -81,12 +78,9 @@ func TestImportFileKeepsDataRemote(t *testing.T) {
 	if fullGets != 1 {
 		t.Fatalf("full GETs = %d, want 1", fullGets)
 	}
-	entry, ok, err := store.Get(context.Background(), hash)
+	entry, err := store.Open(context.Background(), hash)
 	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if !ok {
-		t.Fatal("Get = false, want true")
+		t.Fatalf("Open: %v", err)
 	}
 	if got := entry.Hash(); got != blobs.NewHash(data) {
 		t.Fatalf("Hash = %s, want %s", got, blobs.NewHash(data))
@@ -95,6 +89,7 @@ func TestImportFileKeepsDataRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Outboard: %v", err)
 	}
+	defer outboard.Close()
 	out := make([]byte, outboard.Size())
 	if _, err := outboard.ReadAt(out, 0); err != nil && err != io.EOF {
 		t.Fatalf("ReadAt outboard: %v", err)
@@ -106,6 +101,7 @@ func TestImportFileKeepsDataRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DataReader: %v", err)
 	}
+	defer r.Close()
 	buf := make([]byte, 12)
 	if _, err := r.ReadAt(buf, 5); err != nil {
 		t.Fatalf("ReadAt: %v", err)
@@ -142,12 +138,9 @@ func TestImportFileFallsBackInlineWithoutRanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportFile: %v", err)
 	}
-	entry, ok, err := store.Get(context.Background(), hash)
+	entry, err := store.Open(context.Background(), hash)
 	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-	if !ok {
-		t.Fatal("Get = false, want true")
+		t.Fatalf("Open: %v", err)
 	}
 	assertEntry(t, entry, data)
 	if rangeGets != 0 {
@@ -190,7 +183,7 @@ func TestReadAtNegativeOffset(t *testing.T) {
 	}
 }
 
-func assertEntry(t *testing.T, entry blobs.MapEntry, data []byte) {
+func assertEntry(t *testing.T, entry blobs.Blob, data []byte) {
 	t.Helper()
 	if got := entry.Hash(); got != blobs.NewHash(data) {
 		t.Fatalf("Hash = %s, want %s", got, blobs.NewHash(data))
@@ -202,6 +195,7 @@ func assertEntry(t *testing.T, entry blobs.MapEntry, data []byte) {
 	if err != nil {
 		t.Fatalf("DataReader: %v", err)
 	}
+	defer r.Close()
 	got := make([]byte, len(data))
 	if _, err := r.ReadAt(got, 0); err != nil && err != io.EOF {
 		t.Fatalf("ReadAt: %v", err)

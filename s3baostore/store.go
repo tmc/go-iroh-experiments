@@ -83,23 +83,23 @@ func (s *Store) ImportURL(ctx context.Context, u string) (blobs.Hash, error) {
 	return entry.hash, nil
 }
 
-// Get returns the entry for hash.
-func (s *Store) Get(ctx context.Context, hash blobs.Hash) (blobs.MapEntry, bool, error) {
+// Open returns the blob for hash, or [blobs.ErrBlobNotFound].
+func (s *Store) Open(ctx context.Context, hash blobs.Hash) (blobs.Blob, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	if s == nil {
-		return nil, false, nil
+		return nil, blobs.ErrBlobNotFound
 	}
 	s.mu.RLock()
 	entry, ok := s.entries[hash]
 	s.mu.RUnlock()
 	if !ok {
-		return nil, false, nil
+		return nil, blobs.ErrBlobNotFound
 	}
-	return entry, true, nil
+	return entry, nil
 }
 
 func (s *Store) put(entry Entry) {
@@ -155,14 +155,14 @@ func (e Entry) Size() (uint64, bool) { return e.size, true }
 func (e Entry) IsComplete() bool { return true }
 
 // DataReader returns a reader for e's data.
-func (e Entry) DataReader(ctx context.Context) (io.ReaderAt, error) {
+func (e Entry) DataReader(ctx context.Context) (blobs.BlobReader, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 	}
 	if e.data.url == "" {
-		return bytes.NewReader(e.data.inline), nil
+		return byteReader{Reader: bytes.NewReader(e.data.inline)}, nil
 	}
 	client := e.data.client
 	if client == nil {
@@ -188,11 +188,19 @@ type byteOutboard struct {
 
 func (o byteOutboard) Size() int64 { return o.size }
 
+func (o byteOutboard) Close() error { return nil }
+
+type byteReader struct{ *bytes.Reader }
+
+func (r byteReader) Close() error { return nil }
+
 type httpReaderAt struct {
 	url    string
 	size   uint64
 	client *http.Client
 }
+
+func (r httpReaderAt) Close() error { return nil }
 
 func (r httpReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	if off < 0 {

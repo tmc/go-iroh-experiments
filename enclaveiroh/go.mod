@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/tmc/apple v0.6.15
-	github.com/tmc/go-iroh v0.0.0-20260714184955-aaac36baa54e
+	github.com/tmc/go-iroh v0.1.0
 	github.com/tmc/macgo v0.1.4
 	golang.org/x/sys v0.45.0
 )

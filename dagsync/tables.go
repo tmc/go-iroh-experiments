@@ -46,7 +46,7 @@ func (t *Tables) Put(c cid.Cid, hash blobs.Hash, links []cid.Cid) {
 }
 
 // ImportBytes stores data in m and records metadata in t.
-func (t *Tables) ImportBytes(ctx context.Context, m *blobs.BytesMap, c cid.Cid, data []byte) (blobs.Hash, error) {
+func (t *Tables) ImportBytes(ctx context.Context, m *blobs.MemStore, c cid.Cid, data []byte) (blobs.Hash, error) {
 	if m == nil {
 		return blobs.Hash{}, fmt.Errorf("dagsync: nil blob map")
 	}

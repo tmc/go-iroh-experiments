@@ -17,7 +17,7 @@ const maxRequestSize = 16 * 1024 * 1024
 // Handler serves dagsync requests.
 type Handler struct {
 	Tables *Tables
-	Blobs  blobs.Map
+	Blobs  blobs.Store
 }
 
 // Accept implements iroh.ProtocolHandler.
@@ -56,7 +56,7 @@ func (h *Handler) HandleStream(ctx context.Context, rw io.ReadWriter) error {
 }
 
 // WriteSyncResponse writes the response for req.
-func WriteSyncResponse(ctx context.Context, w io.Writer, req SyncRequest, tables *Tables, m blobs.Map) error {
+func WriteSyncResponse(ctx context.Context, w io.Writer, req SyncRequest, tables *Tables, m blobs.Store) error {
 	cids, err := traversalCIDs(req.Traversal, tables)
 	if err != nil {
 		return err
@@ -74,12 +74,12 @@ func WriteSyncResponse(ctx context.Context, w io.Writer, req SyncRequest, tables
 			if err := writeHeader(w, DataHeader(hash)); err != nil {
 				return err
 			}
-			entry, ok, err := m.Get(ctx, hash)
+			entry, err := m.Open(ctx, hash)
+			if errors.Is(err, blobs.ErrBlobNotFound) {
+				return fmt.Errorf("dagsync: blob data not found for %s", hash)
+			}
 			if err != nil {
 				return err
-			}
-			if !ok {
-				return fmt.Errorf("dagsync: blob data not found for %s", hash)
 			}
 			data, err := readEntry(ctx, entry)
 			if err != nil {
@@ -103,7 +103,7 @@ func WriteSyncResponse(ctx context.Context, w io.Writer, req SyncRequest, tables
 }
 
 // Sync requests data from addr and imports inline response data into out.
-func Sync(ctx context.Context, ep *iroh.Endpoint, addr netaddr.EndpointAddr, tables *Tables, out *blobs.BytesMap, req SyncRequest) error {
+func Sync(ctx context.Context, ep *iroh.Endpoint, addr netaddr.EndpointAddr, tables *Tables, out *blobs.MemStore, req SyncRequest) error {
 	conn, err := ep.Connect(ctx, addr, ALPN)
 	if err != nil {
 		return err
@@ -129,7 +129,7 @@ func Sync(ctx context.Context, ep *iroh.Endpoint, addr netaddr.EndpointAddr, tab
 }
 
 // ReadSyncResponse reads a sync response and records inline data.
-func ReadSyncResponse(ctx context.Context, r io.Reader, tables *Tables, out *blobs.BytesMap, traversal TraversalOpts) error {
+func ReadSyncResponse(ctx context.Context, r io.Reader, tables *Tables, out *blobs.MemStore, traversal TraversalOpts) error {
 	if traversal.Full != nil {
 		return readFullSyncResponse(ctx, r, tables, out, traversal.Full)
 	}
@@ -145,7 +145,7 @@ func ReadSyncResponse(ctx context.Context, r io.Reader, tables *Tables, out *blo
 	return nil
 }
 
-func readFullSyncResponse(ctx context.Context, r io.Reader, tables *Tables, out *blobs.BytesMap, opts *FullTraversalOpts) error {
+func readFullSyncResponse(ctx context.Context, r io.Reader, tables *Tables, out *blobs.MemStore, opts *FullTraversalOpts) error {
 	filter := TraversalFilter{All: true}
 	if opts.Filter != nil {
 		filter = *opts.Filter
@@ -181,7 +181,7 @@ func readFullSyncResponse(ctx context.Context, r io.Reader, tables *Tables, out 
 	return nil
 }
 
-func readOneResponse(ctx context.Context, r io.Reader, tables *Tables, out *blobs.BytesMap, c cid.Cid) error {
+func readOneResponse(ctx context.Context, r io.Reader, tables *Tables, out *blobs.MemStore, c cid.Cid) error {
 	if err := ctxErr(ctx); err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func readHeader(r io.Reader) (SyncResponseHeader, error) {
 	return decodeHeader(b[:])
 }
 
-func readEntry(ctx context.Context, entry blobs.MapEntry) ([]byte, error) {
+func readEntry(ctx context.Context, entry blobs.Blob) ([]byte, error) {
 	if !entry.IsComplete() {
 		return nil, errors.New("dagsync: incomplete blob entry")
 	}
@@ -251,6 +251,7 @@ func readEntry(ctx context.Context, entry blobs.MapEntry) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer r.Close()
 	data := make([]byte, size)
 	if _, err := r.ReadAt(data, 0); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err

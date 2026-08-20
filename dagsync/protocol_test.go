@@ -66,29 +66,26 @@ func TestLoopbackSync(t *testing.T) {
 	ctx := context.Background()
 	data := []byte("hello dagsync")
 	c := testCID(t, data)
-	source := blobs.BytesMap{}
+	source := newTestStore(t)
 	sourceTables := NewTables()
-	if _, err := sourceTables.ImportBytes(ctx, &source, c, data); err != nil {
+	if _, err := sourceTables.ImportBytes(ctx, source, c, data); err != nil {
 		t.Fatalf("ImportBytes source: %v", err)
 	}
 	req := SyncRequest{Traversal: SequenceTraversal(c), Inline: InlineAll()}
 	var wire bytes.Buffer
-	if err := WriteSyncResponse(ctx, &wire, req, sourceTables, &source); err != nil {
+	if err := WriteSyncResponse(ctx, &wire, req, sourceTables, source); err != nil {
 		t.Fatalf("WriteSyncResponse: %v", err)
 	}
-	dest := blobs.BytesMap{}
+	dest := newTestStore(t)
 	destTables := NewTables()
-	if err := ReadSyncResponse(ctx, &wire, destTables, &dest, req.Traversal); err != nil {
+	if err := ReadSyncResponse(ctx, &wire, destTables, dest, req.Traversal); err != nil {
 		t.Fatalf("ReadSyncResponse: %v", err)
 	}
 	hash, ok := destTables.BlobHash(c)
 	if !ok {
 		t.Fatal("missing imported hash")
 	}
-	got, ok := dest.Store().GetBlob(hash)
-	if !ok {
-		t.Fatal("missing imported data")
-	}
+	got := readTestBlob(t, dest, hash)
 	if !bytes.Equal(got, data) {
 		t.Fatalf("data = %q, want %q", got, data)
 	}
@@ -116,13 +113,13 @@ func TestReadSyncResponseRejectsTamperedBlob(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 	req := SyncRequest{Traversal: SequenceTraversal(c), Inline: InlineAll()}
-	dest := blobs.BytesMap{}
+	dest := newTestStore(t)
 	destTables := NewTables()
-	err = ReadSyncResponse(ctx, &wire, destTables, &dest, req.Traversal)
+	err = ReadSyncResponse(ctx, &wire, destTables, dest, req.Traversal)
 	if err == nil {
 		t.Fatal("ReadSyncResponse accepted tampered blob")
 	}
-	if _, ok := dest.Store().GetBlob(wantHash); ok {
+	if _, err := dest.Open(ctx, wantHash); err == nil {
 		t.Fatal("stored tampered blob under expected hash")
 	}
 	if _, ok := destTables.BlobHash(c); ok {
@@ -135,22 +132,22 @@ func TestFullTraversalFollowsDagCborLinks(t *testing.T) {
 	childData := []byte("child")
 	child := testCID(t, childData)
 	rootData, root := dagCBORLinkBlock(t, child)
-	source := blobs.BytesMap{}
+	source := newTestStore(t)
 	sourceTables := NewTables()
-	if _, err := sourceTables.ImportBytes(ctx, &source, child, childData); err != nil {
+	if _, err := sourceTables.ImportBytes(ctx, source, child, childData); err != nil {
 		t.Fatalf("ImportBytes child: %v", err)
 	}
-	if _, err := sourceTables.ImportBytes(ctx, &source, root, rootData); err != nil {
+	if _, err := sourceTables.ImportBytes(ctx, source, root, rootData); err != nil {
 		t.Fatalf("ImportBytes root: %v", err)
 	}
 	req := SyncRequest{Traversal: FullTraversal(root), Inline: InlineAll()}
 	var wire bytes.Buffer
-	if err := WriteSyncResponse(ctx, &wire, req, sourceTables, &source); err != nil {
+	if err := WriteSyncResponse(ctx, &wire, req, sourceTables, source); err != nil {
 		t.Fatalf("WriteSyncResponse: %v", err)
 	}
-	dest := blobs.BytesMap{}
+	dest := newTestStore(t)
 	destTables := NewTables()
-	if err := ReadSyncResponse(ctx, &wire, destTables, &dest, req.Traversal); err != nil {
+	if err := ReadSyncResponse(ctx, &wire, destTables, dest, req.Traversal); err != nil {
 		t.Fatalf("ReadSyncResponse: %v", err)
 	}
 	for _, c := range []cid.Cid{root, child} {
@@ -158,7 +155,7 @@ func TestFullTraversalFollowsDagCborLinks(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing imported hash for %s", c)
 		}
-		if _, ok := dest.Store().GetBlob(hash); !ok {
+		if _, err := dest.Open(ctx, hash); err != nil {
 			t.Fatalf("missing imported data for %s", c)
 		}
 	}
@@ -187,9 +184,9 @@ func TestIrohSync(t *testing.T) {
 
 	data := []byte("hello iroh dagsync")
 	c := testCID(t, data)
-	source := blobs.BytesMap{}
+	source := newTestStore(t)
 	sourceTables := NewTables()
-	if _, err := sourceTables.ImportBytes(ctx, &source, c, data); err != nil {
+	if _, err := sourceTables.ImportBytes(ctx, source, c, data); err != nil {
 		t.Fatalf("ImportBytes source: %v", err)
 	}
 
@@ -198,7 +195,7 @@ func TestIrohSync(t *testing.T) {
 		t.Fatalf("bind server: %v", err)
 	}
 	router, err := iroh.NewRouter(server, map[string]iroh.ProtocolHandler{
-		ALPN: &Handler{Tables: sourceTables, Blobs: &source},
+		ALPN: &Handler{Tables: sourceTables, Blobs: source},
 	}, nil)
 	if err != nil {
 		t.Fatalf("new router: %v", err)
@@ -211,24 +208,39 @@ func TestIrohSync(t *testing.T) {
 	}
 	defer client.Shutdown(ctx)
 
-	dest := blobs.BytesMap{}
+	dest := newTestStore(t)
 	destTables := NewTables()
 	addr := netaddr.NewEndpointAddr(server.ID()).WithIP(server.LocalAddr())
 	req := SyncRequest{Traversal: SequenceTraversal(c), Inline: InlineAll()}
-	if err := Sync(ctx, client, addr, destTables, &dest, req); err != nil {
+	if err := Sync(ctx, client, addr, destTables, dest, req); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
 	hash, ok := destTables.BlobHash(c)
 	if !ok {
 		t.Fatal("missing imported hash")
 	}
-	got, ok := dest.Store().GetBlob(hash)
-	if !ok {
-		t.Fatal("missing imported data")
-	}
+	got := readTestBlob(t, dest, hash)
 	if !bytes.Equal(got, data) {
 		t.Fatalf("data = %q, want %q", got, data)
 	}
+}
+
+func newTestStore(t *testing.T) *blobs.MemStore {
+	t.Helper()
+	store, err := blobs.NewMemStore()
+	if err != nil {
+		t.Fatalf("NewMemStore: %v", err)
+	}
+	return store
+}
+
+func readTestBlob(t *testing.T, store *blobs.MemStore, hash blobs.Hash) []byte {
+	t.Helper()
+	data, err := blobs.ReadBlob(context.Background(), store, hash)
+	if err != nil {
+		t.Fatalf("ReadBlob: %v", err)
+	}
+	return data
 }
 
 func testCID(t *testing.T, data []byte) cid.Cid {

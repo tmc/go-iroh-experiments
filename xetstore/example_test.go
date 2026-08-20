@@ -3,7 +3,6 @@ package xetstore_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/netip"
 	"time"
 
@@ -40,22 +39,7 @@ func ExampleStore_servingBlob() {
 			errc <- err
 			return
 		}
-		errc <- blobs.ServeBlob(ctx, stream, blobs.StoreFunc(func(got blobs.Hash) ([]byte, bool) {
-			entry, ok, err := store.Get(ctx, got)
-			if err != nil || !ok {
-				return nil, false
-			}
-			r, err := entry.DataReader(ctx)
-			if err != nil {
-				return nil, false
-			}
-			size, _ := entry.Size()
-			data := make([]byte, size)
-			if _, err := r.ReadAt(data, 0); err != nil && err != io.EOF {
-				return nil, false
-			}
-			return data, true
-		}))
+		errc <- blobs.ServeBlob(ctx, stream, store)
 	}()
 
 	client, err := iroh.Bind(ctx, iroh.WithBindAddr(netip.AddrPortFrom(netip.IPv6Loopback(), 0)))

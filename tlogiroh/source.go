@@ -19,10 +19,10 @@ type BlobGetter func(ctx context.Context, hash blobs.Hash) ([]byte, error)
 
 // StoreBlobGetter returns a BlobGetter reading from a local blob store.
 func StoreBlobGetter(store blobs.Store) BlobGetter {
-	return func(_ context.Context, hash blobs.Hash) ([]byte, error) {
-		data, ok := store.GetBlob(hash)
-		if !ok {
-			return nil, fmt.Errorf("tlogiroh: get blob %v: %w", hash, blobs.ErrBlobNotFound)
+	return func(ctx context.Context, hash blobs.Hash) ([]byte, error) {
+		data, err := blobs.ReadBlob(ctx, store, hash)
+		if err != nil {
+			return nil, fmt.Errorf("tlogiroh: get blob %v: %w", hash, err)
 		}
 		return data, nil
 	}

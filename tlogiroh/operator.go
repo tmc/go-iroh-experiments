@@ -27,7 +27,7 @@ type Operator struct {
 	signer note.Signer
 
 	mu         sync.Mutex
-	blobMap    *blobs.BytesMap
+	blobMap    *blobs.MemStore
 	doc        *docs.MemoryStore
 	namespace  docs.NamespaceSecret
 	author     docs.Author
@@ -46,7 +46,7 @@ func NewOperator(origin string, signer note.Signer) (*Operator, error) {
 	if signer == nil {
 		return nil, errors.New("tlogiroh: nil signer")
 	}
-	blobMap, err := blobs.NewBytesMap()
+	blobMap, err := blobs.NewMemStore()
 	if err != nil {
 		return nil, fmt.Errorf("tlogiroh: new blob map: %w", err)
 	}
@@ -175,7 +175,7 @@ func (o *Operator) SignedCheckpoint() []byte {
 // Blobs returns the operator's blob store holding entries, tiles, and
 // checkpoint notes, for serving with the iroh blobs protocol.
 func (o *Operator) Blobs() blobs.Store {
-	return o.blobMap.Store()
+	return o.blobMap
 }
 
 // Doc returns the operator's doc store holding the log timeline, for
@@ -201,7 +201,7 @@ func (o *Operator) Source() Source {
 		Doc:       o.doc,
 		Namespace: o.namespace.ID(),
 		Author:    o.author.ID(),
-		Get:       StoreBlobGetter(o.blobMap.Store()),
+		Get:       StoreBlobGetter(o.blobMap),
 	}
 }
 

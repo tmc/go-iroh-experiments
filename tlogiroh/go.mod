@@ -3,7 +3,7 @@ module github.com/tmc/go-iroh-experiments/tlogiroh
 go 1.26
 
 require (
-	github.com/tmc/go-iroh v0.0.0-20260714184955-aaac36baa54e
+	github.com/tmc/go-iroh v0.1.0
 	golang.org/x/mod v0.38.0
 	lukechampine.com/blake3 v1.4.1
 )
