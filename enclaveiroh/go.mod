@@ -1,12 +1,12 @@
 module github.com/tmc/go-iroh-experiments/enclaveiroh
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/tmc/apple v0.6.15
-	github.com/tmc/go-iroh v0.1.0
+	github.com/tmc/go-iroh v0.3.0
 	github.com/tmc/macgo v0.1.4
-	golang.org/x/sys v0.45.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -14,8 +14,8 @@ require (
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
-	github.com/quic-go/quic-go v0.59.1 // indirect
-	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	github.com/quic-go/quic-go v0.62.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )

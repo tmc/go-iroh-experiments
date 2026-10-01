@@ -13,6 +13,7 @@ import (
 	"github.com/tmc/go-iroh/docs"
 	"github.com/tmc/go-iroh/gossip"
 	"github.com/tmc/go-iroh/iroh"
+	"github.com/tmc/go-iroh/key"
 	"github.com/tmc/go-iroh/netaddr"
 	"golang.org/x/mod/sumdb/note"
 )
@@ -92,7 +93,13 @@ func TestNetworkCosignEquivocation(t *testing.T) {
 	op, opVerifier, _ := newTestLog(t)
 	opNode := newTestNode(t, ctx, map[string]iroh.ProtocolHandler{
 		blobs.ALPN: blobStreamHandler{store: op.Blobs()},
-		docs.ALPN:  &docs.Handler{Store: op.Doc(), BlobStore: op.Blobs()},
+		docs.ALPN: &docs.Handler{
+			Store: op.Doc(), BlobStore: op.Blobs(),
+			// The published log is public; other namespaces are not served.
+			Allow: func(namespace docs.NamespaceID, _ key.EndpointID) bool {
+				return namespace == op.Namespace()
+			},
+		},
 	})
 	witnessNode := newTestNode(t, ctx, nil)
 	clientNode := newTestNode(t, ctx, nil)
@@ -252,7 +259,13 @@ func TestNetworkStaleAnnounceRetry(t *testing.T) {
 	op, opVerifier, _ := newTestLog(t)
 	opNode := newTestNode(t, ctx, map[string]iroh.ProtocolHandler{
 		blobs.ALPN: blobStreamHandler{store: op.Blobs()},
-		docs.ALPN:  &docs.Handler{Store: op.Doc(), BlobStore: op.Blobs()},
+		docs.ALPN: &docs.Handler{
+			Store: op.Doc(), BlobStore: op.Blobs(),
+			// The published log is public; other namespaces are not served.
+			Allow: func(namespace docs.NamespaceID, _ key.EndpointID) bool {
+				return namespace == op.Namespace()
+			},
+		},
 	})
 	witnessNode := newTestNode(t, ctx, nil)
 	clientNode := newTestNode(t, ctx, nil)

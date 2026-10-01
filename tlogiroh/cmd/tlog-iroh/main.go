@@ -49,6 +49,7 @@ import (
 	"github.com/tmc/go-iroh/docs"
 	"github.com/tmc/go-iroh/gossip"
 	"github.com/tmc/go-iroh/iroh"
+	"github.com/tmc/go-iroh/key"
 	"github.com/tmc/go-iroh/netaddr"
 	"golang.org/x/mod/sumdb/note"
 )
@@ -195,7 +196,13 @@ func runOperator(ctx context.Context, args []string) error {
 	}
 	n, err := bindNode(ctx, *bind, map[string]iroh.ProtocolHandler{
 		blobs.ALPN: blobStreamHandler{store: op.Blobs()},
-		docs.ALPN:  &docs.Handler{Store: op.Doc(), BlobStore: op.Blobs()},
+		docs.ALPN: &docs.Handler{
+			Store: op.Doc(), BlobStore: op.Blobs(),
+			// The published log is public; other namespaces are not served.
+			Allow: func(namespace docs.NamespaceID, _ key.EndpointID) bool {
+				return namespace == op.Namespace()
+			},
+		},
 	})
 	if err != nil {
 		return err
@@ -571,7 +578,13 @@ func runDemo(ctx context.Context, args []string) error {
 	}
 	opNode, err := bindNode(ctx, "[::1]:0", map[string]iroh.ProtocolHandler{
 		blobs.ALPN: blobStreamHandler{store: op.Blobs()},
-		docs.ALPN:  &docs.Handler{Store: op.Doc(), BlobStore: op.Blobs()},
+		docs.ALPN: &docs.Handler{
+			Store: op.Doc(), BlobStore: op.Blobs(),
+			// The published log is public; other namespaces are not served.
+			Allow: func(namespace docs.NamespaceID, _ key.EndpointID) bool {
+				return namespace == op.Namespace()
+			},
+		},
 	})
 	if err != nil {
 		return err
