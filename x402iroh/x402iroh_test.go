@@ -151,11 +151,12 @@ func TestUnpaidRequestChallenged(t *testing.T) {
 
 	server := bindLoopback(t, ctx, x402iroh.ALPN)
 	price := x402.PaymentRequirements{
-		Scheme:  x402iroh.Scheme,
-		Network: x402iroh.Network,
-		Amount:  "5",
-		Asset:   "credit",
-		PayTo:   server.ID().String(),
+		Scheme:            x402iroh.Scheme,
+		Network:           x402iroh.Network,
+		Amount:            "5",
+		Asset:             "credit",
+		PayTo:             server.ID().String(),
+		MaxTimeoutSeconds: 60,
 	}
 	paywall := &x402.Paywall{
 		Accepts:     x402.StaticAccepts(price),
