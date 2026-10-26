@@ -23,6 +23,7 @@ go-iroh enables.
 
 | Module | Purpose |
 |---|---|
+| `arpciroh` | run unmodified [aRPC services](https://github.com/pancsta/asyncmachine-go/tree/main/pkg/rpc) over an iroh QUIC connection (ALPN `arpc/1`) |
 | `dtrain` | distributed-training collectives (AllReduce, broadcast, barrier) over a gossip group (ALPN `/dtrain/1`) |
 | `directpath` | direct-only QUIC path probe for cross-host and dual-stack go-iroh validation |
 | `grpciroh` | run unmodified gRPC services over an iroh QUIC connection (ALPN `grpc/iroh/1`) |
@@ -52,7 +53,7 @@ local `replace` directive. Create it locally with:
 ```sh
 go work init ./contentdiscovery ./dagsync ./dtrain ./grpciroh ./h3iroh \
     ./directpath ./pkarrnaming ./s3baostore ./tlogiroh ./wasmrelay \
-    ./x402iroh ./xetstore
+    ./x402iroh ./xetstore ./arpciroh
 go work edit -replace github.com/tmc/go-iroh=../go-iroh   # optional, for local go-iroh work
 go work edit -replace github.com/tmc/x402=../x402         # optional, for local x402 work
 ```
