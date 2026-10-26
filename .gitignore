@@ -2,3 +2,4 @@
 # replace directive; it must not be published.
 go.work
 go.work.sum
+/.idea

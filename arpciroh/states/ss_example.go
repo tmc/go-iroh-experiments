@@ -1,0 +1,46 @@
+package states
+
+import (
+	am "github.com/pancsta/asyncmachine-go/pkg/machine"
+	ssrpc "github.com/pancsta/asyncmachine-go/pkg/rpc/states"
+	. "github.com/pancsta/asyncmachine-go/pkg/states/global"
+)
+
+// ExampleStatesDef contains all the states of the Example state machine.
+type ExampleStatesDef struct {
+	*am.StatesBase
+
+	Foo string
+	Bar string
+	Baz string
+
+	// inherit from rpc/StateSourceStatesDef
+	*ssrpc.StateSourceStatesDef
+}
+
+// ExampleGroupsDef contains all the state groups Example state machine.
+type ExampleGroupsDef struct {
+	Mutex S
+}
+
+// ExampleSchema represents all relations and properties of ExampleStates.
+// inherit from rpc/WorkerSchema
+var ExampleSchema = ssrpc.StateSourceSchema.Merge(am.Schema{
+	ssE.Foo: {Remove: sgE.Mutex},
+	ssE.Bar: {Remove: sgE.Mutex},
+	ssE.Baz: {Remove: sgE.Mutex},
+})
+
+// EXPORTS AND GROUPS
+
+var (
+	ssE = am.NewStates(ExampleStatesDef{})
+	sgE = am.NewStateGroups(ExampleGroupsDef{
+		Mutex: S{ssE.Foo, ssE.Bar, ssE.Baz},
+	})
+
+	// ExampleStates contains all the states for the Example machine.
+	ExampleStates = ssE
+	// ExampleGroups contains all the state groups for the Example machine.
+	ExampleGroups = sgE
+)
