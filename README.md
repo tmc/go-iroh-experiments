@@ -26,6 +26,8 @@ go-iroh enables.
 | `dtrain` | distributed-training collectives (AllReduce, broadcast, barrier) over a gossip group (ALPN `/dtrain/1`) |
 | `directpath` | direct-only QUIC path probe for cross-host and dual-stack go-iroh validation |
 | `grpciroh` | run unmodified gRPC services over an iroh QUIC connection (ALPN `grpc/iroh/1`) |
+| `irciroh` | serverless IRC: channels are gossip swarms, sealed channels are MLS groups, and a local bridge serves unmodified IRC clients |
+| `mlsiroh` | MLS delivery and authentication over iroh: leaf credentials bind signing keys to endpoints (ALPN `mlsiroh/ds/1`) |
 | `tlogiroh` | distributed transparency log: sumdb/tlog tiles as iroh blobs, gossiped note-signed checkpoints, witness K-of-N cosigning |
 | `wasmrelay` | browser (js/wasm) relay-only demos, including a cross-tab gossip chat |
 | `x402iroh` | x402-paid HTTP over iroh: endpoint keys authorize payments on an `iroh:ed25519` network (ALPN `x402/iroh/1`) |
@@ -41,7 +43,7 @@ Each module is independent. To use one:
 go get github.com/tmc/go-iroh-experiments/pkarrnaming
 ```
 
-All modules declare Go 1.26.
+Modules declare Go 1.26, except `irciroh` and `mlsiroh`, which declare Go 1.27.
 
 ## Development
 
@@ -51,7 +53,7 @@ local `replace` directive. Create it locally with:
 
 ```sh
 go work init ./contentdiscovery ./dagsync ./dtrain ./grpciroh ./h3iroh \
-    ./directpath ./pkarrnaming ./s3baostore ./tlogiroh ./wasmrelay \
+    ./directpath ./irciroh ./mlsiroh ./pkarrnaming ./s3baostore ./tlogiroh ./wasmrelay \
     ./x402iroh ./xetstore
 go work edit -replace github.com/tmc/go-iroh=../go-iroh   # optional, for local go-iroh work
 go work edit -replace github.com/tmc/x402=../x402         # optional, for local x402 work
