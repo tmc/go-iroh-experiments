@@ -5,8 +5,8 @@ go 1.27
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/tmc/go-iroh v0.3.0
-	github.com/tmc/go-iroh-experiments/mlsiroh v0.0.0-00010101000000-000000000000
-	github.com/tmc/mls v0.0.0-00010101000000-000000000000
+	github.com/tmc/go-iroh-experiments/mlsiroh v0.0.0-20261112011256-ccc42e00d8a4
+	github.com/tmc/mls v0.0.0-20261001024236-83dcd7f92a23
 	lukechampine.com/blake3 v1.4.1
 )
 
@@ -26,11 +26,3 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
-
-// The sibling mlsiroh module has no published version, and both modules
-// use github.com/tmc/mls API that is not yet in one. Until they are
-// published, build against this repository and a sibling checkout of
-// github.com/tmc/mls.
-replace github.com/tmc/go-iroh-experiments/mlsiroh => ../mlsiroh
-
-replace github.com/tmc/mls => ../../mls
