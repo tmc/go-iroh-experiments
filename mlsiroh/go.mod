@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/tmc/go-iroh v0.3.0
-	github.com/tmc/mls v0.0.0-00010101000000-000000000000
+	github.com/tmc/mls v0.0.0-20261001024236-83dcd7f92a23
 )
 
 require (
@@ -17,8 +17,3 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 )
-
-// This module uses github.com/tmc/mls API that is not yet in a published
-// version. Until it is, build against a sibling checkout of that
-// repository.
-replace github.com/tmc/mls => ../../mls
