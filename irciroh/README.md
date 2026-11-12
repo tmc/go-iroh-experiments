@@ -334,6 +334,40 @@ In `irciroh`, channel operator prefixes (`@`) reflect protocol authority:
 - **Sole committer model**: Sealed channels rely on the founder for membership changes (inviting/committing new members and kicking/removing existing ones). Chatting continues normally if the founder is temporarily offline, but new members cannot be admitted or existing ones evicted until the founder reconnects.
 - **Public channels**: Public channel messages are plaintext gossip payloads, signed by the sender's endpoint key and integrity-checked against their sequence counter and timestamp. Anyone who knows or discovers the channel name can join the swarm and read or publish messages.
 
+## Agents
+
+An agent is just another member. The bridge is IRC and nothing more, so
+the integration is not a protocol but a directory:
+
+```sh
+irciroh serve -listen 127.0.0.1:6667 -key ~/.irciroh.key -nick bot   # the node
+irciroh chat  -server 127.0.0.1:6667 -dir ~/irc -join '#go'          # the connection
+```
+
+`chat` keeps the conversation in plain files, one directory per channel:
+
+```
+~/irc/out       server notices and anything not about a channel
+~/irc/in        raw IRC commands - JOIN, TICKET, KICK
+~/irc/nick      the name this node answers to
+~/irc/#go/out   one line per message, oldest first, each stamped
+~/irc/#go/in    lines appended here are said in #go
+```
+
+Reading is `tail` or `grep`, sending is a redirect, and nothing has to
+speak IRC to take part:
+
+```sh
+tail -f ~/irc/'#go'/out
+echo 'the eagle has landed' >> ~/irc/'#go'/in
+irciroh wait -dir ~/irc -target '#go' -match 'copy that' -for 5m
+```
+
+The log outliving its reader is the point. What an agent remembers of a
+conversation ends with its context; a file does not. One `chat` owns a
+directory at a time and takes a lock saying so, because two would file
+every line twice.
+
 ## Status and limits
 
 This module is an experiment. Its wire formats and API may change.

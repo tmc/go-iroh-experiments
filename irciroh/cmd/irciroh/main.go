@@ -5,8 +5,11 @@
 //
 //	irciroh serve [-listen 127.0.0.1:6667] [node flags]
 //	irciroh invite [-listen 127.0.0.1:6667] <#channel>
+//	irciroh chat -dir path [-server 127.0.0.1:6667] [-nick name] [-join #a,#b]
+//	irciroh join -dir path [-join #a,#b] [node flags]
+//	irciroh wait -dir path -target #channel [-match regexp] [-for 1m] [-history]
 //
-// Serve takes the node flags:
+// The node flags are the same for the two commands that own a node:
 //
 //	[-bind [::]:0] [-key path] [-nick name] [-state dir] [-recall=false] [-relay=false] [-relay-server url] [-rendezvous=false]
 //
@@ -31,6 +34,43 @@
 // joins through a ticket while /join #go joins a public channel with no
 // bootstrap peer. Invite asks a running bridge for a ticket to a channel it
 // has joined and prints it.
+//
+// Chat attaches to a running bridge and keeps the conversation in plain
+// files under -dir: one directory per channel, an out file holding every
+// line and an in file whose appended lines are sent. Nothing has to speak
+// IRC to take part, so reading is tail or grep and sending is a redirect:
+//
+//	tail -n 20 ~/irc/'#go'/out
+//	echo 'the eagle has landed' >> ~/irc/'#go'/in
+//
+// A line written to an in file that starts with a slash is sent as a raw
+// IRC command, and two slashes send a line beginning with one.
+//
+// An in file is a queue. A chat records beside it, in in.sent, how much
+// of it has been sent, so a line appended while no chat is running is
+// sent by the next one, and a line an earlier chat already sent is not
+// sent again. An in file with no record beside it predates the record,
+// and what it holds when a chat starts is skipped rather than guessed
+// at: those lines are commands with effects.
+//
+// Join is serve and chat in one process, with no port and no IRC client:
+//
+//	irciroh join -dir ~/irc/scribe -nick scribe -join '#go'
+//
+// It is the shape a program wants, since a program's identity here is a
+// directory and a directory needs no address to be reached at. Serve
+// stays the shape a person wants, because an IRC client has to connect to
+// something.
+//
+// Wait blocks until a line matching -match is appended to one of those
+// logs and prints it, exiting non-zero if -for runs out first. It is there
+// so that a caller waiting for an answer sleeps rather than polls.
+//
+// A directory has one keeper at a time - the lock says which process,
+// since two would file every line twice - and any number of readers.
+// Serve and chat are that keeper in two processes, one holding the node
+// and one holding the connection; join is both in one, with a pipe where
+// the socket was. Wait is always a reader.
 //
 // With -key the endpoint key is read from a file, and generated and written
 // there when the file does not exist, so the identity survives restarts.
@@ -75,6 +115,9 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `usage:
 	irciroh serve [-listen 127.0.0.1:6667] [node flags]
 	irciroh invite [-listen 127.0.0.1:6667] <#channel>
+	irciroh chat -dir path [-server 127.0.0.1:6667] [-nick name] [-join #a,#b]
+	irciroh join -dir path [-join #a,#b] [node flags]
+	irciroh wait -dir path -target #channel [-match regexp] [-for 1m] [-history]
 node flags:
 	[-bind [::]:0] [-key path] [-nick name] [-state dir] [-recall=false] [-relay=false] [-relay-server url] [-rendezvous=false]
 `)
@@ -95,6 +138,12 @@ func main() {
 		err = runServe(ctx, os.Args[2:])
 	case "invite":
 		err = runInvite(os.Args[2:])
+	case "chat":
+		err = runChat(ctx, os.Args[2:])
+	case "join":
+		err = runJoin(ctx, os.Args[2:])
+	case "wait":
+		err = runWait(ctx, os.Args[2:])
 	default:
 		usage()
 	}
