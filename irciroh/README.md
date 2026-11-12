@@ -397,6 +397,83 @@ with a slash is escaped rather than run, since a model that can be
 talked into printing one could be talked into emptying the channel it
 was invited to help in.
 
+### An agent that joins from its own session
+
+The other direction is `irciroh mcp`, a Model Context Protocol server
+over stdin and stdout:
+
+```sh
+claude mcp add irciroh -- irciroh mcp -dir ~/irc
+```
+
+```toml
+# ~/.codex/config.toml
+[mcp_servers.irciroh]
+command = "irciroh"
+args = ["mcp", "-dir", "/home/you/irc"]
+```
+
+Seven tools: `irc_whoami`, `irc_channels`, `irc_read`, `irc_send`, `irc_wait`,
+`irc_join`, `irc_ticket`. `irc_whoami` reports the directory's identity and
+whether a chat is attached. `irc_wait` blocks, so an agent waiting for a
+reply sleeps rather than burning a turn a second on `irc_read`, and it
+returns everything said while it waited rather than only the line that
+matched.
+
+Each answer comes back twice over: as the log, to be read, and as
+records, to be used. A message, a notice and a join are different
+things, and an agent should not have to take a line apart to find out
+which it is holding:
+
+```json
+{"lines": [
+  {"time": "2026-09-19T18:04:11Z", "target": "#go", "kind": "event", "text": "bob joined #go"},
+  {"time": "2026-09-19T18:04:19Z", "target": "#go", "kind": "message", "from": "bob", "text": "anyone looked at the MLS draft?"}
+]}
+```
+
+Every conversation is also a resource, named `irc:///%23go`, and a
+client may subscribe to one. The server then says when the log grows,
+without being asked, and says when a channel appears that was not there
+before — so a channel somebody invited the agent to shows up on its own.
+That is the only way a line reaches an agent that is not in the middle
+of a tool call. Whether the client wakes its model on the notification
+is the client's business; `irc_wait` works either way, and works
+everywhere.
+
+The server holds no endpoint and speaks no IRC — it reads and writes
+the same directory `chat` does. That is forced rather than chosen: a
+stdio MCP server is started once per client session, so a node living
+inside one would be a new identity, a new membership, and a new set of
+channels every time an editor opened. `serve` owns the node, `chat`
+owns the connection, and `agent` and `mcp` are views of what they
+keep. Any number of them can read one directory at once.
+
+A ticket is what bootstraps two agents that have never met: `irc_ticket`
+on one, `irc_join` with it on the other, and they are in the same sealed
+channel with no server between them.
+
+## Verification
+
+Run from this module with the sibling `mlsiroh` and `tmc/mls` checkouts
+available for the local replacements:
+
+```sh
+GOWORK=off go test -race -count=1 ./...
+GOWORK=off go vet ./...
+GOWORK=off go build ./cmd/irciroh
+```
+
+`TestBridgeSeparateProcesses` starts two `serve` command entry points in
+separate processes, with separate identities and state directories, relays
+and rendezvous disabled, and ephemeral loopback ports. It checks IRC
+registration, public and sealed ticket joins, channel messages in both
+directions, and direct messages. `TestNetworkSealedRotateTwice` checks
+fresh signing keys, activation, and another rotation after activation.
+The suite also covers epoch recovery, moderation, persistent bans,
+directory queues, and MCP tools. Loopback tests do not qualify public
+relay or rendezvous availability.
+
 ## Status and limits
 
 This module is an experiment. Its wire formats and API may change.

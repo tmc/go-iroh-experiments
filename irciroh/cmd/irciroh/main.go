@@ -9,8 +9,9 @@
 //	irciroh join -dir path [-join #a,#b] [node flags]
 //	irciroh wait -dir path -target #channel [-match regexp] [-for 1m] [-history]
 //	irciroh agent -dir path -target #channel [-name nick] [-mention] -- command...
+//	irciroh mcp -dir path [-join #a,#b] [-wake command] [-dm-it2-session session-id] [node flags]
 //
-// The node flags are the same for the two commands that own a node:
+// The node flags are the same for the three commands that own a node:
 //
 //	[-bind [::]:0] [-key path] [-nick name] [-state dir] [-recall=false] [-relay=false] [-relay-server url] [-rendezvous=false]
 //
@@ -67,18 +68,60 @@
 // logs and prints it, exiting non-zero if -for runs out first. It is there
 // so that a caller waiting for an answer sleeps rather than polls.
 //
-// Agent gives a command a seat in a channel: it runs the command with what was said on
+// Agent and mcp are the two ways a program takes part. Agent gives a
+// command a seat in a channel: it runs the command with what was said on
 // standard input and says what the command prints, which is the shape a
 // coding agent already has.
 //
 //	irciroh agent -dir ~/irc -target '#go' -- claude -p
 //	irciroh agent -dir ~/irc -target '#go' -- codex exec -
 //
+// Mcp serves the Model Context Protocol over stdin and stdout, so that an
+// agent joins the conversation from inside its own session instead of
+// being run by it:
+//
+//	claude mcp add irciroh -- irciroh mcp -dir ~/irc
+//
+// It keeps the directory as well as reading it, taking the same flags as
+// join and owning a node when nothing else is attached, so that one
+// command is the whole arrangement. When another process already has
+// the directory, mcp is a view of it, and it takes the directory over
+// when that process exits.
+//
+// A subscription is pushed to the client, but a client reading it may
+// not act on it until the agent is next between turns, so mcp can also
+// ring the session it runs in. The -wake flag takes a command, run when
+// somebody talks to this view: a private message, or a channel line
+// opening with this view's nick and a : or a , - not a mention in
+// passing, which is people talking about you rather than to you.
+//
+//	sid=${ITERM_SESSION_ID#*:}
+//	irciroh mcp -dir ~/irc -wake "it2 session send-text $sid 'irciroh: \$1 new, call irc_read'"
+//
+// ITERM_SESSION_ID is iTerm's window:session form and it2 takes the
+// session alone, hence the trim; the backslash keeps $1 for the wake
+// command rather than the shell typing this.
+//
+// The command is told how many messages are new and nothing else, and
+// at most once every half minute however many arrive. Carrying the text
+// would put words from the network into a running agent's prompt; the
+// count sends it to irc_read, where every line is labelled with the key
+// that signed it. For the same reason the rule that decides what rings
+// needs no authenticating: writing somebody else's name buys one
+// interruption and no trust.
+//
+// Its tools answer with the lines taken apart - who spoke, when, and
+// whether it was a message, a notice or a join - as well as with the log
+// itself, and every conversation is a resource a client can subscribe to,
+// so that a line said while the agent is idle is pushed to it rather than
+// waited for.
+//
 // A directory has one keeper at a time - the lock says which process,
 // since two would file every line twice - and any number of readers.
 // Serve and chat are that keeper in two processes, one holding the node
-// and one holding the connection; join is both in one, with a pipe where
-// the socket was. Wait and agent are always readers.
+// and one holding the connection; join and mcp are both in one, with a
+// pipe where the socket was. Wait and agent are always readers, and mcp
+// is a reader whenever somebody else got there first.
 //
 // With -key the endpoint key is read from a file, and generated and written
 // there when the file does not exist, so the identity survives restarts.
@@ -127,6 +170,7 @@ func usage() {
 	irciroh join -dir path [-join #a,#b] [node flags]
 	irciroh wait -dir path -target #channel [-match regexp] [-for 1m] [-history]
 	irciroh agent -dir path -target #channel [-name nick] [-mention] -- command...
+	irciroh mcp -dir path [-join #a,#b] [-wake command] [-dm-it2-session session-id] [node flags]
 node flags:
 	[-bind [::]:0] [-key path] [-nick name] [-state dir] [-recall=false] [-relay=false] [-relay-server url] [-rendezvous=false]
 `)
@@ -155,6 +199,8 @@ func main() {
 		err = runWait(ctx, os.Args[2:])
 	case "agent":
 		err = runAgent(ctx, os.Args[2:])
+	case "mcp":
+		err = runMCP(ctx, os.Args[2:])
 	default:
 		usage()
 	}
