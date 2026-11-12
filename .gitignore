@@ -2,3 +2,6 @@
 # replace directive; it must not be published.
 go.work
 go.work.sum
+
+# IRC bridge binaries built in place.
+/irciroh/cmd/irciroh/irciroh

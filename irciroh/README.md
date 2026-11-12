@@ -233,6 +233,107 @@ bridge notices back the ticket:
 go test -run 'TestNetworkSealed|TestBridgeSealed' -v ./...
 ```
 
+## cmd/irciroh
+
+```sh
+# terminal 1: serve IRC for one identity, keeping the key across restarts
+irciroh serve -listen 127.0.0.1:6667 -key ~/.irciroh.key -nick alice
+
+# terminal 2: any IRC client
+nc 127.0.0.1 6667
+NICK alice
+USER alice 0 * :alice
+JOIN #go
+
+# print an invitation to a channel the running bridge has joined
+irciroh invite -listen 127.0.0.1:6667 '#go'
+
+# elsewhere, join through it: the IRC key parameter is the ticket
+/join #go irciroh...
+```
+
+`serve` prints its endpoint identity and its listen address. Every IRC
+client on one bridge shares the process's endpoint key, nick, and channels:
+one process is one IRC identity.
+
+Supported commands: `NICK`, `USER`, `PING`, `PONG`, `JOIN`, `PART`,
+`PRIVMSG`, `NOTICE`, `TOPIC`, `NAMES`, `WHO`, `LIST`, `MODE`, `QUIT`, and
+the `TICKET` extension. `JOIN <channel> seal` founds a sealed channel. Remote users appear as `nick!id@irciroh`, where
+`id` is the first six hex characters of the endpoint identity. Nicks are
+claims, not reservations: when two members claim one nick, the later
+claimant is shown as `alice~3fa9c1` and `433` is never sent.
+
+## IRC Client Setup
+
+Connect any standard IRC client to `127.0.0.1:6667` (plain TCP, no TLS or password needed on loopback).
+
+### irssi
+
+Connect directly or configure a network:
+
+```text
+/connect 127.0.0.1 6667
+```
+
+Or persistently:
+
+```text
+/server add -network irciroh 127.0.0.1 6667
+/connect irciroh
+```
+
+Joining channels:
+
+```text
+/join #go
+/join #vault seal
+/join #vault <ticket>
+```
+
+### WeeChat
+
+Add an unencrypted local server:
+
+```text
+/server add irciroh 127.0.0.1/6667 -notls
+/connect irciroh
+```
+
+Joining channels:
+
+```text
+/join #go
+/join #vault seal
+/join #vault <ticket>
+```
+
+### HexChat
+
+1. Open **Network List** (`Ctrl+S`), click **Add**, name it `irciroh`.
+2. Click **Edit...**, add `127.0.0.1/6667` to the server list.
+3. Uncheck **Use SSL for all servers on this network**.
+4. Set your nick and click **Close**, then **Connect**.
+
+In HexChat's input bar:
+
+```text
+/join #go
+/join #vault seal
+/join #vault <ticket>
+```
+
+### Channel Operators (`@`)
+
+In `irciroh`, channel operator prefixes (`@`) reflect protocol authority:
+- **Sealed MLS channels**: The channel founder is marked with `@`. The founder holds sole commit and invite authority for the MLS group, controlling roster additions and removals.
+- **Public gossip channels**: Flat and egalitarian with no channel operators. All members participate as peers over gossip without centralized privilege.
+
+### Security & Architecture Considerations
+
+- **Cross-group linkability**: Endpoint IDs are bound to MLS leaf credentials. A peer participating in multiple sealed groups uses its endpoint keypair in leaf credentials, allowing members across groups to correlate or identify the same endpoint.
+- **Sole committer model**: Sealed channels rely on the founder for membership changes (inviting/committing new members and kicking/removing existing ones). Chatting continues normally if the founder is temporarily offline, but new members cannot be admitted or existing ones evicted until the founder reconnects.
+- **Public channels**: Public channel messages are plaintext gossip payloads, signed by the sender's endpoint key and integrity-checked against their sequence counter and timestamp. Anyone who knows or discovers the channel name can join the swarm and read or publish messages.
+
 ## Status and limits
 
 This module is an experiment. Its wire formats and API may change.
@@ -250,6 +351,8 @@ This module is an experiment. Its wire formats and API may change.
   can read them, and anyone who knows the name can join. Use a sealed
   channel for confidentiality.
 - Recall is what live members still hold. Nothing is logged durably.
+- The bridge has been exercised with irssi over loopback. Other clients
+  and long-lived sessions are untested.
 
 ## Out of scope
 
