@@ -8,6 +8,7 @@
 //	irciroh chat -dir path [-server 127.0.0.1:6667] [-nick name] [-join #a,#b]
 //	irciroh join -dir path [-join #a,#b] [node flags]
 //	irciroh wait -dir path -target #channel [-match regexp] [-for 1m] [-history]
+//	irciroh agent -dir path -target #channel [-name nick] [-mention] -- command...
 //
 // The node flags are the same for the two commands that own a node:
 //
@@ -66,11 +67,18 @@
 // logs and prints it, exiting non-zero if -for runs out first. It is there
 // so that a caller waiting for an answer sleeps rather than polls.
 //
+// Agent gives a command a seat in a channel: it runs the command with what was said on
+// standard input and says what the command prints, which is the shape a
+// coding agent already has.
+//
+//	irciroh agent -dir ~/irc -target '#go' -- claude -p
+//	irciroh agent -dir ~/irc -target '#go' -- codex exec -
+//
 // A directory has one keeper at a time - the lock says which process,
 // since two would file every line twice - and any number of readers.
 // Serve and chat are that keeper in two processes, one holding the node
 // and one holding the connection; join is both in one, with a pipe where
-// the socket was. Wait is always a reader.
+// the socket was. Wait and agent are always readers.
 //
 // With -key the endpoint key is read from a file, and generated and written
 // there when the file does not exist, so the identity survives restarts.
@@ -118,6 +126,7 @@ func usage() {
 	irciroh chat -dir path [-server 127.0.0.1:6667] [-nick name] [-join #a,#b]
 	irciroh join -dir path [-join #a,#b] [node flags]
 	irciroh wait -dir path -target #channel [-match regexp] [-for 1m] [-history]
+	irciroh agent -dir path -target #channel [-name nick] [-mention] -- command...
 node flags:
 	[-bind [::]:0] [-key path] [-nick name] [-state dir] [-recall=false] [-relay=false] [-relay-server url] [-rendezvous=false]
 `)
@@ -144,6 +153,8 @@ func main() {
 		err = runJoin(ctx, os.Args[2:])
 	case "wait":
 		err = runWait(ctx, os.Args[2:])
+	case "agent":
+		err = runAgent(ctx, os.Args[2:])
 	default:
 		usage()
 	}

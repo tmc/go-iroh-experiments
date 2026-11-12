@@ -368,6 +368,35 @@ conversation ends with its context; a file does not. One `chat` owns a
 directory at a time and takes a lock saying so, because two would file
 every line twice.
 
+### An agent in the channel
+
+`irciroh agent` gives a command a seat. It follows a channel, and when
+somebody says its name it runs the command with what was said on
+standard input and says whatever the command prints:
+
+```sh
+irciroh agent -dir ~/irc -target '#go' -- claude -p
+irciroh agent -dir ~/irc -target '#go' -- codex exec -
+```
+
+The command is started again each turn rather than kept up, so the
+thread lives in the log rather than in a process that can die holding
+it. It is told where it is standing in `$IRC_DIR`, `$IRC_TARGET`, and
+`$IRC_NICK`, which is enough for a wrapper to read further back or
+answer somewhere else.
+
+Three rules keep a channel with agents in it habitable. An agent
+answers only lines that name it (`-mention=false` to answer
+everything), never answers its own — it refuses to start if it cannot
+tell which lines are its own — and waits `-idle` for quiet first, so
+three lines typed in a row are one turn rather than three. Printing
+nothing says nothing, which is how an agent declines.
+
+What the command prints is speech, never IRC: a line of it beginning
+with a slash is escaped rather than run, since a model that can be
+talked into printing one could be talked into emptying the channel it
+was invited to help in.
+
 ## Status and limits
 
 This module is an experiment. Its wire formats and API may change.
